@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Test API Usuarios</title>
+  </head>
+  <body>
+    <h1>Test API - Usuario Me</h1>
+    <button onclick="testMe()">Probar GET /api/usuarios/me/</button>
+    <pre id="result"></pre>
+
+    <script>
+      const TOKEN = "6dad577f001efa03fdf585cd52ab653f8d1c2496";
+
+      async function testMe() {
+        try {
+          const response = await fetch(
+            "http://127.0.0.1:8000/api/usuarios/me/",
+            {
+              method: "GET",
+              headers: {
+                Authorization: `Token ${TOKEN}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+
+          const data = await response.json();
+          document.getElementById("result").textContent = JSON.stringify(
+            data,
+            null,
+            2
+          );
+        } catch (error) {
+          document.getElementById("result").textContent = "Error: " + error;
+        }
+      }
+    </script>
+  </body>
+</html>

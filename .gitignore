@@ -1,0 +1,32 @@
+# Python/Django
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.Python
+.pytest_cache/
+.coverage
+
+# Virtualenv
+env/
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Local env files
+.env
+
+# Static/media (si se generan localmente)
+staticfiles/
+media/
+
+# SQLite (si usas sqlite en local)
+*.sqlite3
