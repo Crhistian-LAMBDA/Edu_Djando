@@ -113,6 +113,31 @@ class Usuario(AbstractUser):
     
     def __str__(self):
         return f"{self.username} - {self.get_rol_display()}"
+    
+    def enviar_correo_cambio_password(self):
+        """Envía correo de confirmación cuando se cambia la contraseña"""
+        from django.core.mail import send_mail
+        asunto = 'Contraseña cambiada - Colegio Django'
+        mensaje = f'''
+Hola {self.first_name},
+
+Tu contraseña ha sido cambiada exitosamente en el sistema de Colegio Django.
+
+Si no realizaste este cambio, contacta al administrador inmediatamente.
+
+Saludos,
+Sistema de Gestión Educativa - Colegio Django
+        '''
+        try:
+            send_mail(
+                asunto,
+                mensaje,
+                'noreply@colegio.com',
+                [self.email],
+                fail_silently=False
+            )
+        except Exception as e:
+            print(f"Error enviando correo a {self.email}: {str(e)}")
 
 
 class ProfesorAsignatura(models.Model):

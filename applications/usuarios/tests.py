@@ -2,6 +2,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
 from django.contrib.auth import get_user_model
 from applications.usuarios.models import Facultad, Programa, Asignatura, ProfesorAsignatura
+from unittest.mock import patch
 
 
 class UsuarioAPITests(APITestCase):
@@ -93,3 +94,27 @@ class UsuarioAPITests(APITestCase):
 		rels = ProfesorAsignatura.objects.filter(profesor=self.profesor)
 		self.assertEqual(rels.count(), 2)
 
+	@patch('django.core.mail.send_mail')
+	def test_cambiar_password_envia_correo(self, mock_send_mail):
+		"""Verifica que cambiar contraseña envía un correo de confirmación"""
+		self.client.force_authenticate(user=self.admin)
+		url = "/api/usuarios/cambiar_password/"
+		payload = {
+			"password_actual": "pass1234",
+			"password_nuevo": "NewPass123",
+			"password_nuevo_confirm": "NewPass123"
+		}
+		resp = self.client.post(url, payload, format="json")
+		
+		# Verificar que la respuesta fue exitosa
+		self.assertEqual(resp.status_code, 200)
+		self.assertIn("correo de confirmación", resp.data["detail"].lower())
+		
+		# Verificar que send_mail fue llamado
+		self.assertTrue(mock_send_mail.called)
+		
+		# Verificar los argumentos de la llamada
+		call_args = mock_send_mail.call_args
+		self.assertIn("Contraseña cambiada", call_args[0][0])  # asunto
+		# La lista de destinatarios es el 4º argumento (índice 3)
+		self.assertIn(self.admin.email, call_args[0][3])  # email destinatario en lista

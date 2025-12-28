@@ -228,12 +228,29 @@ class UsuarioViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Validar que tenga al menos una mayúscula
+        if not any(c.isupper() for c in password_nuevo):
+            return Response(
+                {'detail': 'La contraseña debe contener al menos una letra mayúscula.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validar que tenga al menos un número
+        if not any(c.isdigit() for c in password_nuevo):
+            return Response(
+                {'detail': 'La contraseña debe contener al menos un número.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         # Cambiar contraseña
         usuario.set_password(password_nuevo)
         usuario.save()
         
+        # Enviar correo de confirmación
+        usuario.enviar_correo_cambio_password()
+        
         return Response(
-            {'detail': 'Contraseña actualizada exitosamente.'},
+            {'detail': 'Contraseña actualizada exitosamente. Se envió un correo de confirmación.'},
             status=status.HTTP_200_OK
         )
     
