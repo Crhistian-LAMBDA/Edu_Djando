@@ -18,13 +18,17 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
-from applications.usuarios.api.router import router
+from applications.usuarios.api.router import router as usuarios_router
+from applications.academico.api.router import router as academico_router
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     
-    # API REST
-    path('api/', include(router.urls)),
+    # API REST - Usuarios y Auth
+    path('api/', include(usuarios_router.urls)),
+    # API REST - Académico
+    path('api/', include(academico_router.urls)),
+    
     # JWT refresh (SimpleJWT estándar)
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     

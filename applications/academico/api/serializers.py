@@ -1,5 +1,8 @@
+"""
+Serializers para modelos académicos
+"""
 from rest_framework import serializers
-from applications.usuarios.models import Facultad, Asignatura, Programa, ProfesorAsignatura
+from applications.academico.models import Facultad, Asignatura, Programa, ProfesorAsignatura
 
 
 class FacultadSerializer(serializers.ModelSerializer):
@@ -25,7 +28,15 @@ class ProgramaSerializer(serializers.ModelSerializer):
 class ProfesorAsignaturaSerializer(serializers.ModelSerializer):
     asignatura_nombre = serializers.CharField(source='asignatura.nombre', read_only=True)
     asignatura_codigo = serializers.CharField(source='asignatura.codigo', read_only=True)
+    profesor_username = serializers.CharField(source='profesor.username', read_only=True)
+    profesor_nombre_completo = serializers.SerializerMethodField()
     
     class Meta:
         model = ProfesorAsignatura
-        fields = ['id', 'profesor', 'asignatura', 'asignatura_nombre', 'asignatura_codigo', 'fecha_asignacion']
+        fields = [
+            'id', 'profesor', 'profesor_username', 'profesor_nombre_completo',
+            'asignatura', 'asignatura_nombre', 'asignatura_codigo', 'fecha_asignacion'
+        ]
+    
+    def get_profesor_nombre_completo(self, obj):
+        return f"{obj.profesor.first_name} {obj.profesor.last_name}".strip()

@@ -1,36 +1,5 @@
 from django.contrib import admin
-from .models import Usuario, Facultad, Asignatura, Programa, ProfesorAsignatura
-
-
-@admin.register(Facultad)
-class FacultadAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'fecha_creacion')
-    search_fields = ('nombre', 'descripcion')
-    ordering = ('-fecha_creacion',)
-
-
-@admin.register(Asignatura)
-class AsignaturaAdmin(admin.ModelAdmin):
-    list_display = ('codigo', 'nombre', 'creditos', 'fecha_creacion')
-    search_fields = ('codigo', 'nombre', 'descripcion')
-    list_filter = ('creditos', 'fecha_creacion')
-    ordering = ('-fecha_creacion',)
-
-
-@admin.register(Programa)
-class ProgramaAdmin(admin.ModelAdmin):
-    list_display = ('codigo', 'nombre', 'facultad', 'fecha_creacion')
-    search_fields = ('codigo', 'nombre', 'descripcion', 'facultad__nombre')
-    list_filter = ('facultad', 'fecha_creacion')
-    ordering = ('-fecha_creacion',)
-
-
-@admin.register(ProfesorAsignatura)
-class ProfesorAsignaturaAdmin(admin.ModelAdmin):
-    list_display = ('profesor', 'asignatura', 'fecha_asignacion')
-    search_fields = ('profesor__username', 'profesor__first_name', 'profesor__last_name', 'asignatura__codigo', 'asignatura__nombre')
-    list_filter = ('fecha_asignacion', 'asignatura')
-    ordering = ('-fecha_asignacion',)
+from .models import Usuario, PasswordResetToken
 
 
 @admin.register(Usuario)
@@ -48,3 +17,12 @@ class UsuarioAdmin(admin.ModelAdmin):
         ('Asignaciones Académicas', {'fields': ('facultad', 'programa')}),
         ('Dates', {'fields': ('last_login', 'date_joined')}),
     )
+
+
+@admin.register(PasswordResetToken)
+class PasswordResetTokenAdmin(admin.ModelAdmin):
+    list_display = ('usuario', 'token', 'fecha_creacion', 'fecha_expiracion', 'usado')
+    list_filter = ('usado', 'fecha_creacion', 'fecha_expiracion')
+    search_fields = ('usuario__username', 'usuario__email', 'token')
+    ordering = ('-fecha_creacion',)
+

@@ -2,53 +2,6 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 
-class Facultad(models.Model):
-    nombre = models.CharField(max_length=100, unique=True)
-    descripcion = models.TextField(blank=True, null=True)
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    
-    class Meta:
-        verbose_name = 'Facultad'
-        verbose_name_plural = 'Facultades'
-    
-    def __str__(self):
-        return self.nombre
-
-
-class Asignatura(models.Model):
-    nombre = models.CharField(max_length=100)
-    codigo = models.CharField(max_length=20, unique=True)
-    descripcion = models.TextField(blank=True, null=True)
-    creditos = models.IntegerField(default=0)
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    
-    class Meta:
-        verbose_name = 'Asignatura'
-        verbose_name_plural = 'Asignaturas'
-    
-    def __str__(self):
-        return f"{self.codigo} - {self.nombre}"
-
-
-class Programa(models.Model):
-    nombre = models.CharField(max_length=100)
-    codigo = models.CharField(max_length=20, unique=True)
-    descripcion = models.TextField(blank=True, null=True)
-    facultad = models.ForeignKey(
-        Facultad,
-        on_delete=models.CASCADE,
-        related_name='programas'
-    )
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    
-    class Meta:
-        verbose_name = 'Programa'
-        verbose_name_plural = 'Programas'
-    
-    def __str__(self):
-        return f"{self.codigo} - {self.nombre}"
-
-
 class Usuario(AbstractUser):
     ROLES = (
         ('super_admin', 'Super Administrador'),
@@ -84,7 +37,7 @@ class Usuario(AbstractUser):
     
     # Relaciones con entidades académicas
     facultad = models.ForeignKey(
-        Facultad,
+        'academico.Facultad',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -93,7 +46,7 @@ class Usuario(AbstractUser):
     )
     
     programa = models.ForeignKey(
-        Programa,
+        'academico.Programa',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -138,27 +91,41 @@ Sistema de Gestión Educativa - Colegio Django
             )
         except Exception as e:
             print(f"Error enviando correo a {self.email}: {str(e)}")
+    
+    def enviar_correo_recuperacion(self, token):
+        """Envía correo con enlace de recuperación de contraseña usando Celery"""
+        from applications.usuarios.tasks import send_password_recovery_email
+        
+        try:
+            send_password_recovery_email.delay(
+                user_email=self.email,
+                first_name=self.first_name,
+                token=token
+            )
+        except Exception as e:
+            print(f"Error al encolar tarea de correo de recuperación: {str(e)}")
 
 
-class ProfesorAsignatura(models.Model):
-    """Tabla intermedia para relación N-to-N entre Profesor y Asignatura"""
-    profesor = models.ForeignKey(
+class PasswordResetToken(models.Model):
+    """Token temporal para recuperación de contraseña"""
+    usuario = models.ForeignKey(
         Usuario,
         on_delete=models.CASCADE,
-        limit_choices_to={'rol': 'profesor'},
-        related_name='asignaturas_asignadas'
+        related_name='reset_tokens'
     )
-    asignatura = models.ForeignKey(
-        Asignatura,
-        on_delete=models.CASCADE,
-        related_name='profesores_asignados'
-    )
-    fecha_asignacion = models.DateTimeField(auto_now_add=True)
+    token = models.CharField(max_length=100, unique=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_expiracion = models.DateTimeField()
+    usado = models.BooleanField(default=False)
     
     class Meta:
-        verbose_name = 'Profesor-Asignatura'
-        verbose_name_plural = 'Profesores-Asignaturas'
-        unique_together = ('profesor', 'asignatura')
+        verbose_name = 'Token de Recuperación'
+        verbose_name_plural = 'Tokens de Recuperación'
+        ordering = ['-fecha_creacion']
     
     def __str__(self):
-        return f"{self.profesor.username} → {self.asignatura.codigo}"
+        return f"Reset token para {self.usuario.username}"
+    
+    def esta_expirado(self):
+        from django.utils import timezone
+        return timezone.now() > self.fecha_expiracion

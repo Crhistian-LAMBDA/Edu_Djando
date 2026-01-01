@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,7 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-b8+wk6uv)w*dz2hz=^shwyf+2p3p_=^@nlo+dcys28cl&y$&la'
+SECRET_KEY = 'django-insecure-&ci5qs%j!om0a6l!%o_x9!&99!@#j)e4&f_#8)r_-2hh8pj0xl'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -42,6 +43,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'drf_spectacular',
     'applications.usuarios',
+    'applications.academico',
 ]
 
 MIDDLEWARE = [
@@ -112,9 +114,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'es-es'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/Bogota'
 
 USE_I18N = True
 
@@ -163,7 +165,9 @@ SIMPLE_JWT = {
 }
 
 # Configuración CORS
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:3000',
+]
 CORS_ALLOW_CREDENTIALS = True
 
 # Configuración drf-spectacular (Swagger)
@@ -198,6 +202,7 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'jck2873594@gmail.com'  # Cambiar por tu email
-EMAIL_HOST_PASSWORD = 'pnkb srbj zqut usre'  # Cambiar por tu App Password de Gmail
-DEFAULT_FROM_EMAIL = 'Colegio Django <jck2873594@gmail.com>'
+EMAIL_HOST_USER = 'jck2873594@gmail.com'
+EMAIL_HOST_PASSWORD = 'udcfiybpcivgkcup'
+DEFAULT_FROM_EMAIL = 'noreply@colegio.com'
+
