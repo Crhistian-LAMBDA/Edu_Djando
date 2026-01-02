@@ -2,23 +2,50 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 
-class Usuario(AbstractUser):
-    ROLES = (
+class Rol(models.Model):
+    """Modelo de roles para permitir múltiples roles por usuario"""
+    TIPOS_ROLES = (
         ('super_admin', 'Super Administrador'),
         ('admin', 'Administrador'),
+        ('coordinador', 'Coordinador'),
         ('profesor', 'Profesor'),
         ('estudiante', 'Estudiante'),
     )
     
+    tipo = models.CharField(
+        max_length=20,
+        choices=TIPOS_ROLES,
+        unique=True
+    )
+    descripcion = models.CharField(max_length=200, blank=True)
+    
+    class Meta:
+        verbose_name = 'Rol'
+        verbose_name_plural = 'Roles'
+    
+    def __str__(self):
+        return self.get_tipo_display()
+
+
+class Usuario(AbstractUser):
     ESTADOS = (
         ('activo', 'Activo'),
         ('inactivo', 'Inactivo'),
     )
     
+    roles = models.ManyToManyField(
+        Rol,
+        blank=True,
+        related_name='usuarios',
+        help_text='Un usuario puede tener múltiples roles'
+    )
+    
+    # Campo legacy para compatibilidad (será eliminado después)
     rol = models.CharField(
         max_length=20,
-        choices=ROLES,
-        default='estudiante'
+        choices=[('super_admin', 'Super Administrador'), ('admin', 'Administrador'), ('coordinador', 'Coordinador'), ('profesor', 'Profesor'), ('estudiante', 'Estudiante')],
+        null=True,
+        blank=True
     )
     
     estado = models.CharField(
@@ -45,13 +72,13 @@ class Usuario(AbstractUser):
         help_text='Facultad asignada (solo para admin)'
     )
     
-    programa = models.ForeignKey(
-        'academico.Programa',
+    carrera = models.ForeignKey(
+        'academico.Carrera',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='estudiantes',
-        help_text='Programa académico (solo para estudiantes)'
+        help_text='Carrera académica (solo para estudiantes)'
     )
     
     fecha_creacion = models.DateTimeField(
@@ -65,7 +92,16 @@ class Usuario(AbstractUser):
         verbose_name_plural = 'Usuarios'
     
     def __str__(self):
-        return f"{self.username} - {self.get_rol_display()}"
+        roles_list = ', '.join([r.get_tipo_display() for r in self.roles.all()]) or 'Sin roles'
+        return f"{self.username} - {roles_list}"
+    
+    def tiene_rol(self, tipo_rol):
+        """Verifica si el usuario tiene un rol específico"""
+        return self.roles.filter(tipo=tipo_rol).exists()
+    
+    def tiene_alguno_de_estos_roles(self, tipos_roles):
+        """Verifica si el usuario tiene alguno de los roles especificados"""
+        return self.roles.filter(tipo__in=tipos_roles).exists()
     
     def enviar_correo_cambio_password(self):
         """Envía correo de confirmación cuando se cambia la contraseña"""

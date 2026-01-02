@@ -140,7 +140,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10,
+    'PAGE_SIZE': 100,
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
@@ -205,4 +205,7 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'jck2873594@gmail.com'
 EMAIL_HOST_PASSWORD = 'udcfiybpcivgkcup'
 DEFAULT_FROM_EMAIL = 'noreply@colegio.com'
+
+# URL del frontend para enlaces en correos
+FRONTEND_URL = 'http://localhost:3000'
 

@@ -81,11 +81,50 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         
         # Extraer asignaturas_ids si viene en request.data (solo para profesores)
         asignaturas_ids = request.data.pop('asignaturas_ids', None)
+        roles_list = request.data.pop('roles', None)
         
         serializer = UsuarioSerializer(usuario, data=request.data, partial=True)
         
         if serializer.is_valid():
             usuario_actualizado = serializer.save()
+            
+            # Sincronizar estado con is_active
+            if 'estado' in request.data:
+                if request.data['estado'] == 'activo':
+                    usuario_actualizado.is_active = True
+                elif request.data['estado'] == 'inactivo':
+                    usuario_actualizado.is_active = False
+                usuario_actualizado.save()
+            
+            # Sincronizar rol legacy con tabla ManyToMany roles
+            if 'rol' in request.data and request.data['rol']:
+                from applications.usuarios.models import Rol
+                try:
+                    rol_obj = Rol.objects.get(tipo=request.data['rol'])
+                    # Limpiar roles anteriores y asignar el nuevo
+                    usuario_actualizado.roles.clear()
+                    usuario_actualizado.roles.add(rol_obj)
+                except Rol.DoesNotExist:
+                    pass
+            
+            # Si viene lista de roles, usarla (múltiples roles)
+            if roles_list:
+                from applications.usuarios.models import Rol
+                rol_objects = Rol.objects.filter(tipo__in=roles_list)
+                usuario_actualizado.roles.set(rol_objects)
+            
+            # Si cambió a activo, enviar correo de bienvenida
+            if 'estado' in request.data and request.data['estado'] == 'activo' and usuario_actualizado.roles.count() > 0:
+                from applications.usuarios.tasks import send_approval_welcome_email
+                try:
+                    roles_list = [r.tipo for r in usuario_actualizado.roles.all()]
+                    send_approval_welcome_email.delay(
+                        user_email=usuario_actualizado.email,
+                        first_name=usuario_actualizado.first_name or usuario_actualizado.username,
+                        roles=roles_list
+                    )
+                except Exception:
+                    pass
             
             # Si es profesor y se enviaron asignaturas, actualizar relación N-to-N
             if usuario_actualizado.rol == 'profesor' and asignaturas_ids is not None:

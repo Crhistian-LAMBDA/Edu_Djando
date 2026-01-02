@@ -1,7 +1,8 @@
 from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
 from django.contrib.auth import get_user_model
-from applications.usuarios.models import Facultad, Programa, Asignatura, ProfesorAsignatura
+from applications.usuarios.models import Facultad, Asignatura, ProfesorAsignatura
+from applications.academico.models import Carrera
 from unittest.mock import patch
 
 
@@ -11,9 +12,9 @@ class UsuarioAPITests(APITestCase):
 		self.User = get_user_model()
 
 		# Datos académicos base
-		self.facultad = Facultad.objects.create(nombre="Ingeniería")
-		self.programa = Programa.objects.create(
-			nombre="Sistemas", codigo="SIS-01", facultad=self.facultad
+		self.facultad = Facultad.objects.create(nombre="Ingeniería", codigo="ING")
+		self.carrera = Carrera.objects.create(
+			nombre="Sistemas", codigo="SIS-01", facultad=self.facultad, nivel='pregrado', modalidad='presencial'
 		)
 		self.asig1 = Asignatura.objects.create(nombre="Algoritmos", codigo="ALG-01")
 		self.asig2 = Asignatura.objects.create(nombre="Bases", codigo="BAS-01")
@@ -32,7 +33,7 @@ class UsuarioAPITests(APITestCase):
 			username="prof1", password="pass1234", rol="profesor"
 		)
 		self.estudiante = self.User.objects.create_user(
-			username="estu1", password="pass1234", rol="estudiante", programa=self.programa
+			username="estu1", password="pass1234", rol="estudiante", carrera=self.carrera
 		)
 
 	def test_registro_estudiante(self):

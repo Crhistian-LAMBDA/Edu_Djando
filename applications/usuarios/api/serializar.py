@@ -102,30 +102,27 @@ class RegistroSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """
-        Crear un nuevo usuario hasheando la contraseña y enviar email de bienvenida
+        Crear un nuevo usuario como INACTIVO y SIN ROLES asignados
+        Solo Super Admin/Admin pueden activarlo y asignar roles
         """
-        from applications.usuarios.tasks import send_welcome_email
+        from applications.usuarios.tasks import send_approval_pending_email
         
         password = validated_data.pop('password')
-        # Si no envían estado, usar el default del modelo
-        estado = validated_data.get('estado', None)
         
-        # Establecer is_active en True por defecto si no se proporciona
-        if 'is_active' not in validated_data:
-            validated_data['is_active'] = True
+        # IMPORTANTE: El nuevo usuario siempre se crea INACTIVO
+        validated_data['is_active'] = False
+        validated_data['estado'] = 'inactivo'
         
         usuario = Usuario.objects.create_user(
             **validated_data,
             password=password
         )
         
-        # Enviar correo de bienvenida asíncrono con contraseña (no bloquear registro si falla)
+        # Enviar correo avisando que está pendiente de aprobación
         try:
-            send_welcome_email.delay(
+            send_approval_pending_email.delay(
                 user_email=usuario.email,
-                username=usuario.username,
-                first_name=usuario.first_name or usuario.username,
-                password=password
+                first_name=usuario.first_name or usuario.username
             )
         except Exception:
             pass
@@ -139,21 +136,26 @@ class UsuarioSerializer(serializers.ModelSerializer):
     """
     rol_display = serializers.CharField(source='get_rol_display', read_only=True)
     facultad_nombre = serializers.CharField(source='facultad.nombre', read_only=True)
-    programa_nombre = serializers.CharField(source='programa.nombre', read_only=True)
+    carrera_nombre = serializers.CharField(source='carrera.nombre', read_only=True)
     asignaturas_ids = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
     
     class Meta:
         model = Usuario
         fields = (
             'id', 'username', 'email', 'first_name', 'last_name',
             'numero_documento',
-            'rol', 'rol_display', 'estado', 'is_active', 'is_staff', 'is_superuser',
-            'facultad', 'facultad_nombre', 'programa', 'programa_nombre', 'asignaturas_ids',
+            'rol', 'rol_display', 'roles', 'estado', 'is_active', 'is_staff', 'is_superuser',
+            'facultad', 'facultad_nombre', 'carrera', 'carrera_nombre', 'asignaturas_ids',
             'fecha_creacion', 'date_joined', 'last_login'
         )
         read_only_fields = (
             'id', 'fecha_creacion', 'date_joined', 'last_login'
         )
+    
+    def get_roles(self, obj):
+        """Obtener lista de roles asignados al usuario"""
+        return [r.tipo for r in obj.roles.all()]
     
     def get_asignaturas_ids(self, obj):
         """Obtener IDs de asignaturas asignadas al profesor"""

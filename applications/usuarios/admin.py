@@ -4,8 +4,8 @@ from .models import Usuario, PasswordResetToken
 
 @admin.register(Usuario)
 class UsuarioAdmin(admin.ModelAdmin):
-    list_display = ('username', 'email', 'first_name', 'last_name', 'rol', 'estado', 'facultad', 'programa', 'is_staff')
-    list_filter = ('rol', 'estado', 'is_staff', 'is_superuser', 'facultad', 'programa', 'date_joined')
+    list_display = ('username', 'email', 'first_name', 'last_name', 'rol', 'estado', 'facultad', 'carrera', 'is_staff')
+    list_filter = ('rol', 'estado', 'is_staff', 'is_superuser', 'facultad', 'carrera', 'date_joined')
     search_fields = ('username', 'email', 'first_name', 'last_name', 'rol', 'estado')
     ordering = ('-date_joined',)
     
@@ -14,7 +14,7 @@ class UsuarioAdmin(admin.ModelAdmin):
         ('Información personal', {'fields': ('first_name', 'last_name', 'email')}),
         ('Permisos', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Rol y Estado', {'fields': ('rol', 'estado')}),
-        ('Asignaciones Académicas', {'fields': ('facultad', 'programa')}),
+        ('Asignaciones Académicas', {'fields': ('facultad', 'carrera')}),
         ('Dates', {'fields': ('last_login', 'date_joined')}),
     )
 

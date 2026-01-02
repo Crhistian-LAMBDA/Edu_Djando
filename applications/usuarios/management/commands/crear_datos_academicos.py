@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from applications.usuarios.models import Facultad, Asignatura, Programa
+from applications.academico.models import Facultad, Asignatura, Carrera
 
 
 class Command(BaseCommand):
@@ -8,9 +8,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         # Crear Facultades
         facultades_data = [
-            {'nombre': 'Facultad de Ingeniería', 'descripcion': 'Facultad de ciencias de la ingeniería'},
-            {'nombre': 'Facultad de Ciencias', 'descripcion': 'Facultad de ciencias exactas y naturales'},
-            {'nombre': 'Facultad de Humanidades', 'descripcion': 'Facultad de ciencias humanas y sociales'},
+            {'nombre': 'Facultad de Ingeniería', 'codigo': 'ING', 'descripcion': 'Facultad de ciencias de la ingeniería'},
+            {'nombre': 'Facultad de Ciencias', 'codigo': 'CIS', 'descripcion': 'Facultad de ciencias exactas y naturales'},
+            {'nombre': 'Facultad de Humanidades', 'codigo': 'HUM', 'descripcion': 'Facultad de ciencias humanas y sociales'},
         ]
 
         for fac_data in facultades_data:
@@ -32,19 +32,19 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS('✓ Asignaturas creadas'))
 
-        # Crear Programas
+        # Crear Carreras
         fac_ing = Facultad.objects.get(nombre='Facultad de Ingeniería')
         fac_cs = Facultad.objects.get(nombre='Facultad de Ciencias')
 
         programas_data = [
-            {'codigo': 'ING-SIS', 'nombre': 'Ingeniería de Sistemas', 'facultad': fac_ing},
-            {'codigo': 'ING-IND', 'nombre': 'Ingeniería Industrial', 'facultad': fac_ing},
-            {'codigo': 'MAT', 'nombre': 'Matemáticas', 'facultad': fac_cs},
-            {'codigo': 'FIS', 'nombre': 'Física', 'facultad': fac_cs},
+            {'codigo': 'ING-SIS', 'nombre': 'Ingeniería de Sistemas', 'facultad': fac_ing, 'nivel': 'pregrado', 'modalidad': 'presencial'},
+            {'codigo': 'ING-IND', 'nombre': 'Ingeniería Industrial', 'facultad': fac_ing, 'nivel': 'pregrado', 'modalidad': 'presencial'},
+            {'codigo': 'MAT', 'nombre': 'Matemáticas', 'facultad': fac_cs, 'nivel': 'pregrado', 'modalidad': 'presencial'},
+            {'codigo': 'FIS', 'nombre': 'Física', 'facultad': fac_cs, 'nivel': 'pregrado', 'modalidad': 'presencial'},
         ]
 
         for prog_data in programas_data:
-            Programa.objects.get_or_create(codigo=prog_data['codigo'], defaults=prog_data)
+            Carrera.objects.get_or_create(codigo=prog_data['codigo'], facultad=prog_data['facultad'], defaults=prog_data)
 
-        self.stdout.write(self.style.SUCCESS('✓ Programas creados'))
+        self.stdout.write(self.style.SUCCESS('✓ Carreras creadas'))
         self.stdout.write(self.style.SUCCESS('\n✅ Datos iniciales creados exitosamente'))
