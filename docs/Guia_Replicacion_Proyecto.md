@@ -1,3 +1,530 @@
+---
+
+## 12. Historia de Usuario HU-05: Sistema de Permisos Granulares
+
+### Objetivo
+Control de acceso jerarquizado: Super Admin (nivel 5) > Admin (4) > Coordinador (3) > Docente (2) > Estudiante (1).
+
+### Implementación Backend
+
+**1. Constante de jerarquía (`applications/usuarios/models.py`)**:
+```python
+ROLE_HIERARCHY = {
+  'super_admin': 5,
+  'admin': 4,
+  'coordinador': 3,
+  'docente': 2,
+  'estudiante': 1
+}
+```
+
+**2. Método de validación**:
+```python
+def tiene_permiso_jerarquico(self, accion_nivel_requerido):
+  """
+  Valida si el usuario puede realizar una acción según jerarquía
+  """
+  nivel_usuario = ROLE_HIERARCHY.get(self.rol, 0)
+  return nivel_usuario >= accion_nivel_requerido
+```
+
+**3. Serializer con validación (`applications/usuarios/api/serializers.py`)**:
+```python
+from applications.usuarios.models import ROLE_HIERARCHY
+
+class UsuarioSerializer(serializers.ModelSerializer):
+  def validate(self, data):
+    request = self.context.get('request')
+    if request and request.user:
+      nuevo_rol = data.get('rol', self.instance.rol if self.instance else None)
+      if nuevo_rol:
+        nivel_usuario = ROLE_HIERARCHY.get(request.user.rol, 0)
+        nivel_nuevo_rol = ROLE_HIERARCHY.get(nuevo_rol, 0)
+                
+        if nivel_nuevo_rol >= nivel_usuario:
+          raise serializers.ValidationError({
+            'rol': f'No puedes asignar un rol igual o superior al tuyo. Tu nivel: {nivel_usuario}'
+          })
+    return data
+```
+
+**4. ViewSet con permisos (`applications/usuarios/api/views.py`)**:
+```python
+from applications.usuarios.models import ROLE_HIERARCHY
+
+class UsuarioViewSet(viewsets.ModelViewSet):
+  permission_classes = [IsAuthenticated]
+    
+  def get_queryset(self):
+    user = self.request.user
+    nivel_usuario = ROLE_HIERARCHY.get(user.rol, 0)
+        
+    # Filtrar usuarios con nivel inferior
+    roles_permitidos = [rol for rol, nivel in ROLE_HIERARCHY.items() if nivel < nivel_usuario]
+    return Usuario.objects.filter(rol__in=roles_permitidos)
+    
+  def update(self, request, *args, **kwargs):
+    # Validación adicional antes de actualizar
+    instance = self.get_object()
+    nuevo_rol = request.data.get('rol', instance.rol)
+        
+    nivel_usuario = ROLE_HIERARCHY.get(request.user.rol, 0)
+    nivel_nuevo_rol = ROLE_HIERARCHY.get(nuevo_rol, 0)
+        
+    if nivel_nuevo_rol >= nivel_usuario:
+      return Response(
+        {'error': 'No tienes permiso para asignar este rol'},
+        status=status.HTTP_403_FORBIDDEN
+      )
+        
+    return super().update(request, *args, **kwargs)
+```
+
+### Implementación Frontend
+
+**1. Hook useRoleHierarchy (`src/hooks/useRoleHierarchy.js`)**:
+```javascript
+export const ROLE_HIERARCHY = {
+  'super_admin': 5,
+  'admin': 4,
+  'coordinador': 3,
+  'docente': 2,
+  'estudiante': 1
+};
+
+export const useRoleHierarchy = () => {
+  const { user } = useAuth();
+  
+  const canEditRole = (targetRole) => {
+  const userLevel = ROLE_HIERARCHY[user?.rol] || 0;
+  const targetLevel = ROLE_HIERARCHY[targetRole] || 0;
+  return userLevel > targetLevel;
+  };
+  
+  return { canEditRole };
+};
+```
+
+**2. Integración en UsuariosPage (`src/features/usuarios/pages/UsuariosPage.js`)**:
+```javascript
+const { canEditRole } = useRoleHierarchy();
+
+// Filtrar roles editables
+const rolesEditables = Object.keys(ROLE_HIERARCHY)
+  .filter(rol => canEditRole(rol))
+  .map(value => ({ value, label: value.replace('_', ' ').toUpperCase() }));
+
+// Deshabilitar edición si no tiene permisos
+const canEditUser = (usuario) => canEditRole(usuario.rol);
+```
+
+### Testing
+```bash
+# Backend - Validar jerarquía
+python manage.py shell
+>>> from applications.usuarios.models import Usuario, ROLE_HIERARCHY
+>>> admin = Usuario.objects.get(email='admin@colegio.edu')
+>>> admin.tiene_permiso_jerarquico(3)  # True si es admin o superior
+
+# Frontend - Verificar filtrado de roles
+# Login como admin → Ver que solo aparecen roles inferiores en dropdown
+# Intentar crear super_admin → Ver error 403
+```
+
+---
+
+## 13. Historia de Usuario HU-06: Gestión de Asignaturas
+
+### Objetivo
+
+CRUD completo de asignaturas con toggle de estado activo/inactivo + notificación email al docente cuando se desactiva.
+
+### Implementación Backend
+
+**1. Modelo Asignatura (`applications/academico/models.py`)**:
+
+```python
+class Asignatura(models.Model):
+  codigo = models.CharField(max_length=10, unique=True)
+  nombre = models.CharField(max_length=200)
+  creditos = models.PositiveIntegerField(default=3)
+  estado = models.BooleanField(default=True)  # True=Activa, False=Inactiva
+  facultad = models.ForeignKey('Facultad', on_delete=models.CASCADE)
+  docente_responsable = models.ForeignKey(
+    'usuarios.Usuario',
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    limit_choices_to={'rol': 'docente'}
+  )
+
+  class Meta:
+    ordering = ['codigo']
+
+  def __str__(self):
+    return f"{self.codigo} - {self.nombre}"
+```
+
+**2. Serializer (`applications/academico/api/serializers.py`)**:
+
+```python
+class AsignaturaSerializer(serializers.ModelSerializer):
+  facultad_nombre = serializers.CharField(source='facultad.nombre', read_only=True)
+  docente_nombre = serializers.SerializerMethodField()
+
+  class Meta:
+    model = Asignatura
+    fields = ['id', 'codigo', 'nombre', 'creditos', 'estado',
+          'facultad', 'facultad_nombre', 'docente_responsable', 'docente_nombre']
+
+  def get_docente_nombre(self, obj):
+    if obj.docente_responsable:
+      return f"{obj.docente_responsable.first_name} {obj.docente_responsable.last_name}"
+    return None
+```
+
+**3. ViewSet con notificación (`applications/academico/api/views.py`)**:
+
+```python
+from applications.usuarios.tasks import send_asignatura_desactivacion_email
+
+class AsignaturaViewSet(viewsets.ModelViewSet):
+  queryset = Asignatura.objects.all()
+  serializer_class = AsignaturaSerializer
+  permission_classes = [IsAuthenticated]
+
+  def update(self, request, *args, **kwargs):
+    instance = self.get_object()
+    estado_anterior = instance.estado
+
+    response = super().update(request, *args, **kwargs)
+
+    # Detectar cambio de activo a inactivo
+    instance.refresh_from_db()
+    if estado_anterior is True and instance.estado is False:
+      if instance.docente_responsable:
+        send_asignatura_desactivacion_email.delay(
+          docente_email=instance.docente_responsable.email,
+          docente_nombre=f"{instance.docente_responsable.first_name} {instance.docente_responsable.last_name}",
+          asignatura_codigo=instance.codigo,
+          asignatura_nombre=instance.nombre
+        )
+
+    return response
+```
+
+**4. Celery Task para Email (`applications/usuarios/tasks.py`)**:
+
+```python
+@shared_task
+def send_asignatura_desactivacion_email(docente_email, docente_nombre, asignatura_codigo, asignatura_nombre):
+  """
+  Envía notificación al docente cuando su asignatura es desactivada
+  """
+  subject = f'⚠️ Asignatura {asignatura_codigo} Desactivada'
+
+  html_message = f"""
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="UTF-8">
+    <style>
+      body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+      .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+      .header {{ background: #f44336; color: white; padding: 20px; border-radius: 5px; }}
+      .content {{ padding: 20px; background: #f9f9f9; margin-top: 20px; }}
+      .highlight {{ background: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; }}
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h2>🔔 Notificación de Cambio de Estado</h2>
+      </div>
+      <div class="content">
+        <p>Estimado/a <strong>{docente_nombre}</strong>,</p>
+        <p>Le informamos que la asignatura bajo su responsabilidad ha sido <strong>desactivada</strong>:</p>
+        <div class="highlight">
+          <strong>Código:</strong> {asignatura_codigo}<br>
+          <strong>Nombre:</strong> {asignatura_nombre}<br>
+          <strong>Estado:</strong> ❌ INACTIVA
+        </div>
+        <p><strong>Implicaciones:</strong></p>
+        <ul>
+          <li>No aparecerá en el listado de asignaturas activas</li>
+          <li>No se podrán crear nuevas matrículas</li>
+          <li>Las matrículas existentes no se ven afectadas</li>
+        </ul>
+        <p>Si tiene alguna duda, contacte con coordinación académica.</p>
+        <hr>
+        <p style="font-size: 12px; color: #666;">
+          Este es un mensaje automático del Sistema de Gestión Académica.<br>
+          Por favor no responda a este correo.
+        </p>
+      </div>
+    </div>
+  </body>
+  </html>
+  """
+
+  send_mail(
+    subject=subject,
+    message='',  # Texto plano vacío
+    from_email=settings.EMAIL_HOST_USER,
+    recipient_list=[docente_email],
+    html_message=html_message,
+    fail_silently=False
+  )
+
+  return f'Email enviado a {docente_email}'
+```
+
+### Implementación Frontend
+
+**1. Página AsignaturasPage (`src/features/academico/pages/AsignaturasPage.js`)**:
+
+**Características principales:**
+
+- DataGrid con columnas: código, nombre, créditos, facultad, docente, estado
+- Botón toggle estado con confirmación
+- Chip visual: ✓ ACTIVA (verde) / ✗ INACTIVA (rojo)
+- Mensajes diferenciados según acción (activar vs desactivar)
+- Integración con backend para CRUD completo
+
+**Función clave - Toggle Estado:**
+
+```javascript
+const toggleEstado = async (row) => {
+  const nuevoEstado = !row.estado;
+  const accion = nuevoEstado ? "activar" : "desactivar";
+  const confirmMessage = nuevoEstado
+    ? `¿Confirmas que deseas ACTIVAR la asignatura "${row.nombre}"?`
+    : `¿Confirmas que deseas DESACTIVAR la asignatura "${row.nombre}"?\n\n⚠️ El docente responsable será notificado por correo electrónico.`;
+
+  if (!window.confirm(confirmMessage)) return;
+
+  try {
+    await axios.patch(
+      `${API_BASE_URL}/asignaturas/${row.id}/`,
+      { estado: nuevoEstado },
+      {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        },
+      }
+    );
+
+    const successMessage = nuevoEstado
+      ? `✅ Asignatura "${row.nombre}" activada correctamente`
+      : `✅ Asignatura "${row.nombre}" desactivada. El docente ha sido notificado por correo.`;
+
+    enqueueSnackbar(successMessage, { variant: "success" });
+    fetchAsignaturas(); // Recargar
+  } catch (error) {
+    console.error("Error al cambiar estado:", error);
+    enqueueSnackbar(`❌ Error al ${accion} asignatura`, { variant: "error" });
+  }
+};
+```
+
+**Columna Estado en DataGrid:**
+
+```javascript
+{
+  field: 'estado',
+  headerName: 'Estado',
+  width: 130,
+  renderCell: (params) => (
+  <Chip
+    icon={params.value ? <CheckCircleIcon /> : <ErrorIcon />}
+    label={params.value ? 'ACTIVA' : 'INACTIVA'}
+    color={params.value ? 'success' : 'error'}
+    size="small"
+    sx={{ fontWeight: 600 }}
+  />
+  )
+}
+```
+
+### Configuración Celery (para emails asíncronos)
+
+**1. Iniciar worker:**
+
+```bash
+cd colegio_Dj/edu
+celery -A edu worker --loglevel=info --pool=solo
+```
+
+**2. Configuración EMAIL en `edu/settings.py`:**
+
+```python
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'tu-email@gmail.com'
+EMAIL_HOST_PASSWORD = 'tu-app-password'  # Contraseña de aplicación de Gmail
+```
+
+**3. Celery config en `edu/celery.py`:**
+
+```python
+import os
+from celery import Celery
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'edu.settings')
+
+app = Celery('edu')
+app.config_from_object('django.conf:settings', namespace='CELERY')
+app.autodiscover_tasks()
+```
+
+### Testing HU-06
+
+**Paso 1: Preparar datos**
+
+```bash
+python manage.py shell
+>>> from applications.academico.models import Asignatura
+>>> from applications.usuarios.models import Usuario
+>>> docente = Usuario.objects.filter(rol='docente').first()
+>>> asignatura = Asignatura.objects.create(
+...     codigo='TEST-001',
+...     nombre='Asignatura de Prueba',
+...     creditos=3,
+...     estado=True,
+...     facultad_id=1,  # Ajustar según tu BD
+...     docente_responsable=docente
+... )
+```
+
+**Paso 2: Iniciar servicios**
+
+```bash
+# Terminal 1: Backend Django
+cd colegio_Dj/edu
+python manage.py runserver
+
+# Terminal 2: Celery worker
+celery -A edu worker --loglevel=info --pool=solo
+
+# Terminal 3: Frontend React
+cd colegio_re
+npm start
+```
+
+**Paso 3: Probar flujo completo**
+
+1. Login en frontend (http://localhost:3000)
+2. Ir a Asignaturas (menú lateral)
+3. Buscar asignatura TEST-001
+4. Clic en botón de estado (icono switch)
+5. Confirmar desactivación
+6. Verificar:
+   - ✅ Chip cambia a "❌ INACTIVA" en rojo
+   - ✅ Mensaje de éxito con "El docente ha sido notificado"
+   - ✅ Email recibido en bandeja del docente
+   - ✅ Logs de Celery muestran tarea ejecutada
+
+**Paso 4: Verificar logs Celery**
+
+```bash
+# En terminal 2 (Celery worker) deberías ver:
+[INFO] Task applications.usuarios.tasks.send_asignatura_desactivacion_email[...] succeeded
+```
+
+**Paso 5: Reactivar asignatura**
+
+1. Volver a hacer clic en toggle
+2. Confirmar activación
+3. Verificar chip cambia a "✓ ACTIVA" en verde
+4. NO se envía email (solo se notifica en desactivación)
+
+### Troubleshooting
+
+**Email no llega:**
+
+- Verificar EMAIL_HOST_USER y EMAIL_HOST_PASSWORD en settings.py
+- Verificar que Celery worker esté ejecutándose
+- Revisar logs de Celery para ver errores
+- Verificar que docente tenga email válido en BD
+
+**Error al cambiar estado:**
+
+- Verificar que token JWT esté vigente (relogin si es necesario)
+- Verificar permisos del usuario (debe ser admin o superior)
+- Revisar consola del navegador para errores de red
+
+**Celery no ejecuta task:**
+
+- Verificar Redis está corriendo (si usas Redis como broker)
+- Reiniciar Celery worker: `Ctrl+C` y volver a ejecutar comando
+- Verificar que task esté registrada: `celery -A edu inspect registered`
+
+---
+
+## 14. Comandos Útiles
+
+### Backend (Django)
+
+```bash
+# Crear migraciones
+python manage.py makemigrations
+
+# Aplicar migraciones
+python manage.py migrate
+
+# Crear superusuario
+python manage.py createsuperuser
+
+# Shell interactivo
+python manage.py shell
+
+# Ejecutar servidor
+python manage.py runserver
+
+# Ejecutar Celery worker
+celery -A edu worker --loglevel=info --pool=solo
+```
+
+### Frontend (React)
+
+```bash
+# Instalar dependencias
+npm install
+
+# Ejecutar servidor desarrollo
+npm start
+
+# Build para producción
+npm run build
+
+# Verificar sintaxis ESLint
+npm run lint
+```
+
+### Base de Datos (PostgreSQL)
+
+```sql
+-- Ver usuarios
+SELECT id, email, rol, is_active FROM usuarios_usuario;
+
+-- Ver asignaturas
+SELECT id, codigo, nombre, estado, docente_responsable_id FROM academico_asignatura;
+
+-- Actualizar estado asignatura
+UPDATE academico_asignatura SET estado = false WHERE id = 1;
+```
+
+---
+
+**Última actualización:** $(Get-Date -Format "yyyy-MM-dd HH:mm")
+**Versión:** 2.0
+**Estado del Proyecto:**
+
+- ✅ HU-05: Sistema de Permisos Granulares - 100% Completo
+- ✅ HU-06: Gestión de Asignaturas con Notificaciones - 100% Completo
+
 # Guía de Replicación del Proyecto Colegio Django (Backend + Frontend)
 
 Esta guía te lleva paso a paso para reproducir exactamente el sistema que ya tenemos funcionando, desde cero, en otra máquina o entorno. Solo necesitas seguir las instrucciones y copiar/pegar tu código en el orden indicado.

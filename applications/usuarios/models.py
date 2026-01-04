@@ -2,6 +2,48 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 
+class Permiso(models.Model):
+    """Modelo de permisos granulares para control de acceso a funcionalidades específicas"""
+    MODULOS = (
+        ('academico', 'Académico'),
+        ('usuarios', 'Usuarios'),
+        ('reportes', 'Reportes'),
+        ('notificaciones', 'Notificaciones'),
+    )
+    
+    codigo = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text='Código único del permiso (ej: crear_asignatura, calificar_tarea)'
+    )
+    nombre = models.CharField(
+        max_length=200,
+        help_text='Nombre descriptivo del permiso'
+    )
+    descripcion = models.TextField(
+        blank=True,
+        help_text='Descripción detallada del permiso'
+    )
+    modulo = models.CharField(
+        max_length=50,
+        choices=MODULOS,
+        help_text='Módulo al que pertenece el permiso'
+    )
+    activo = models.BooleanField(
+        default=True,
+        help_text='Indica si el permiso está activo'
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = 'Permiso'
+        verbose_name_plural = 'Permisos'
+        ordering = ['modulo', 'codigo']
+    
+    def __str__(self):
+        return f"{self.modulo} - {self.nombre}"
+
+
 class Rol(models.Model):
     """Modelo de roles para permitir múltiples roles por usuario"""
     TIPOS_ROLES = (
@@ -18,6 +60,12 @@ class Rol(models.Model):
         unique=True
     )
     descripcion = models.CharField(max_length=200, blank=True)
+    permisos_asignados = models.ManyToManyField(
+        Permiso,
+        blank=True,
+        related_name='roles',
+        help_text='Permisos específicos asignados a este rol'
+    )
     
     class Meta:
         verbose_name = 'Rol'
@@ -25,6 +73,10 @@ class Rol(models.Model):
     
     def __str__(self):
         return self.get_tipo_display()
+    
+    def tiene_permiso(self, codigo_permiso):
+        """Verifica si el rol tiene un permiso específico"""
+        return self.permisos_asignados.filter(codigo=codigo_permiso, activo=True).exists()
 
 
 class Usuario(AbstractUser):
@@ -102,6 +154,18 @@ class Usuario(AbstractUser):
     def tiene_alguno_de_estos_roles(self, tipos_roles):
         """Verifica si el usuario tiene alguno de los roles especificados"""
         return self.roles.filter(tipo__in=tipos_roles).exists()
+    
+    def tiene_permiso(self, codigo_permiso):
+        """Verifica si el usuario tiene un permiso específico a través de sus roles"""
+        # Super admin siempre tiene todos los permisos
+        if self.roles.filter(tipo='super_admin').exists():
+            return True
+        
+        # Verificar si alguno de los roles del usuario tiene el permiso
+        for rol in self.roles.all():
+            if rol.tiene_permiso(codigo_permiso):
+                return True
+        return False
     
     def enviar_correo_cambio_password(self):
         """Envía correo de confirmación cuando se cambia la contraseña"""

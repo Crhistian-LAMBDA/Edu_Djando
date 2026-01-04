@@ -3,6 +3,7 @@ Serializers para modelos académicos
 """
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import models
 from applications.academico.models import (
     Facultad,
     Asignatura,
@@ -42,8 +43,9 @@ class PeriodoAcademicoSerializer(serializers.ModelSerializer):
 class ProfesoresAdicionalesField(serializers.PrimaryKeyRelatedField):
     """Campo personalizado para profesores adicionales con queryset filtrado"""
     def get_queryset(self):
+        # Acepta usuarios con rol académico. En la BD usamos tanto 'profesor' como 'docente'.
         return Usuario.objects.filter(
-            roles__tipo='profesor'
+            models.Q(rol__in=['profesor', 'docente']) | models.Q(roles__tipo='profesor')
         ).distinct()
 
 
@@ -63,6 +65,19 @@ class AsignaturaSerializer(serializers.ModelSerializer):
         queryset=Carrera.objects.all(),
         required=False
     )
+    # Nuevos campos para mostrar carrera y facultad
+    carrera_nombre = serializers.SerializerMethodField(read_only=True)
+    carrera_facultad = serializers.SerializerMethodField(read_only=True)
+    carrera_id = serializers.SerializerMethodField(read_only=True)
+    # Prerrequisitos
+    prerrequisitos = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Asignatura.objects.all(),
+        required=False
+    )
+    prerrequisitos_nombres = serializers.SerializerMethodField(read_only=True)
+    # Semestre desde PlanCarreraAsignatura
+    semestre = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Asignatura
@@ -71,7 +86,9 @@ class AsignaturaSerializer(serializers.ModelSerializer):
             'docente_responsable', 'docente_responsable_nombre',
             'profesores_adicionales_ids', 'profesores_adicionales_nombres',
             'periodo_academico', 'periodo_academico_nombre',
-            'carreras',
+            'carreras', 'carrera_nombre', 'carrera_facultad', 'carrera_id',
+            'prerrequisitos', 'prerrequisitos_nombres',
+            'semestre',
             'fecha_creacion'
         ]
         read_only_fields = ['id', 'fecha_creacion']
@@ -89,6 +106,33 @@ class AsignaturaSerializer(serializers.ModelSerializer):
             for p in obj.profesores_adicionales.all()
         ]
     
+    def get_carrera_nombre(self, obj):
+        """Retorna el nombre de la primera carrera asociada"""
+        plan = obj.planes_carrera.select_related('carrera').first()
+        return plan.carrera.nombre if plan else None
+    
+    def get_carrera_facultad(self, obj):
+        """Retorna el nombre de la facultad de la primera carrera asociada"""
+        plan = obj.planes_carrera.select_related('carrera__facultad').first()
+        return plan.carrera.facultad.nombre if plan and plan.carrera.facultad else None
+    
+    def get_carrera_id(self, obj):
+        """Retorna el ID de la primera carrera asociada"""
+        plan = obj.planes_carrera.select_related('carrera').first()
+        return plan.carrera.id if plan else None
+    
+    def get_prerrequisitos_nombres(self, obj):
+        """Retorna nombres y códigos de los prerrequisitos"""
+        return [
+            {'codigo': p.codigo, 'nombre': p.nombre}
+            for p in obj.prerrequisitos.all()
+        ]
+    
+    def get_semestre(self, obj):
+        """Retorna el semestre de la primera carrera asociada"""
+        plan = obj.planes_carrera.first()
+        return plan.semestre if plan else None
+    
     def validate_codigo(self, value):
         """Validar que el código sea único"""
         # Si estamos editando, excluir la asignatura actual
@@ -103,8 +147,8 @@ class AsignaturaSerializer(serializers.ModelSerializer):
     
     def validate_docente_responsable(self, value):
         """Validar que el docente sea realmente un docente"""
-        if value and value.rol != 'profesor':
-            raise serializers.ValidationError("El docente responsable debe tener rol de profesor.")
+        if value and value.rol not in ['profesor', 'docente']:
+            raise serializers.ValidationError("El docente responsable debe tener rol de profesor/docente.")
         return value
 
 

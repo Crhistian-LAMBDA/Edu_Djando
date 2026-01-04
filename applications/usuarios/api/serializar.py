@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from applications.usuarios.models import Permiso, Rol
 import re
 
 Usuario = get_user_model()
@@ -113,6 +114,7 @@ class RegistroSerializer(serializers.ModelSerializer):
         validated_data['is_active'] = False
         validated_data['estado'] = 'inactivo'
         
+        # Crear usuario
         usuario = Usuario.objects.create_user(
             **validated_data,
             password=password
@@ -162,6 +164,32 @@ class UsuarioSerializer(serializers.ModelSerializer):
         if obj.rol == 'profesor':
             return list(obj.asignaturas_asignadas.values_list('asignatura_id', flat=True))
         return []
+
+
+class PermisoSerializer(serializers.ModelSerializer):
+    """Serializer para el modelo Permiso"""
+    class Meta:
+        model = Permiso
+        fields = ('id', 'codigo', 'nombre', 'descripcion', 'modulo', 'activo', 'fecha_creacion')
+        read_only_fields = ('id', 'fecha_creacion')
+
+
+class RolSerializer(serializers.ModelSerializer):
+    """Serializer para el modelo Rol con permisos asignados"""
+    permisos = PermisoSerializer(source='permisos_asignados', many=True, read_only=True)
+    permisos_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Permiso.objects.all(),
+        source='permisos_asignados',
+        write_only=True,
+        required=False
+    )
+    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    
+    class Meta:
+        model = Rol
+        fields = ('id', 'tipo', 'tipo_display', 'descripcion', 'permisos', 'permisos_ids')
+        read_only_fields = ('id',)
 
 
 class LoginSerializer(serializers.Serializer):

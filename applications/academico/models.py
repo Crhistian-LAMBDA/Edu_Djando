@@ -82,6 +82,14 @@ class Asignatura(models.Model):
         related_name='asignaturas',
         blank=True
     )
+    # Relación autorreferencial para prerrequisitos
+    prerrequisitos = models.ManyToManyField(
+        'self',
+        symmetrical=False,
+        blank=True,
+        related_name='asignaturas_dependientes',
+        help_text='Asignaturas que son requisito para esta'
+    )
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -138,7 +146,7 @@ class PlanCarreraAsignatura(models.Model):
     )
     asignatura = models.ForeignKey(
         Asignatura,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name='planes_carrera'
     )
     semestre = models.PositiveSmallIntegerField(null=True, blank=True)

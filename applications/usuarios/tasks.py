@@ -350,3 +350,76 @@ def send_approval_welcome_email(user_email, first_name, roles):
         return f'Email de aprobación enviado a {user_email}'
     except Exception as e:
         return f'Error al enviar email: {str(e)}'
+
+
+@shared_task
+def send_asignatura_desactivacion_email(docente_email, docente_nombre, asignatura_nombre, asignatura_codigo):
+    """
+    Tarea asíncrona para notificar al docente cuando se desactiva una asignatura
+    """
+    subject = f'Notificación: Asignatura Desactivada - {asignatura_codigo}'
+    
+    message = f"""
+Hola {docente_nombre},
+
+La asignatura {asignatura_codigo} - {asignatura_nombre} ha sido desactivada por un administrador.
+
+Esta acción significa que:
+- Ya no aparecerá en el listado de asignaturas activas
+- Los estudiantes no podrán inscribirse a ella
+- Se mantiene el registro histórico
+
+Si consideras que esto es un error, contacta al administrador del sistema.
+
+Saludos,
+Sistema de Gestión Educativa
+    """
+    
+    html_message = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+                <div style="background-color: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                    <h2 style="color: #f44336; text-align: center;">⚠️ Notificación: Asignatura Desactivada</h2>
+                    
+                    <p>Hola <strong>{docente_nombre}</strong>,</p>
+                    
+                    <p>Te notificamos que la siguiente asignatura ha sido <strong>desactivada</strong> por un administrador:</p>
+                    
+                    <div style="background-color: #fff3cd; padding: 20px; border-left: 4px solid #f44336; margin: 20px 0; border-radius: 4px;">
+                        <p style="margin: 5px 0;"><strong>Código:</strong> {asignatura_codigo}</p>
+                        <p style="margin: 5px 0;"><strong>Asignatura:</strong> {asignatura_nombre}</p>
+                    </div>
+                    
+                    <p><strong>Implicaciones de esta desactivación:</strong></p>
+                    <ul style="line-height: 1.8;">
+                        <li>Ya no aparecerá en el listado de asignaturas activas</li>
+                        <li>Los estudiantes no podrán inscribirse a ella</li>
+                        <li>Se mantiene el registro histórico completo</li>
+                    </ul>
+                    
+                    <p>Si consideras que esto es un error, contacta al administrador del sistema de inmediato.</p>
+                    
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                    
+                    <p style="color: #777; font-size: 12px; text-align: center;">
+                        Sistema de Gestión Educativa - Este es un correo automático
+                    </p>
+                </div>
+            </div>
+        </body>
+    </html>
+    """
+    
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[docente_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        return f'Notificación de desactivación enviada a {docente_email}'
+    except Exception as e:
+        return f'Error al enviar notificación: {str(e)}'
