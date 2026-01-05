@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
+from django.db.models import Q
 import pandas as pd
 import io
 from applications.academico.models import (
@@ -54,6 +55,36 @@ class FacultadViewSet(viewsets.ModelViewSet):
         'list': 'ver_facultades',
         'retrieve': 'ver_facultades',
     }
+    
+    def get_queryset(self):
+        """Filtrar facultades según rol del usuario"""
+        queryset = Facultad.objects.all()
+        user = self.request.user
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Super Admin ve todas las facultades
+        if 'super_admin' in user_roles:
+            return queryset
+        
+        # Admin solo ve su propia facultad (solo lectura)
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(id=user.facultad.id)
+            return Facultad.objects.none()
+        
+        # Coordinador solo ve su propia facultad (solo lectura)
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(id=user.facultad.id)
+            return Facultad.objects.none()
+        
+        return queryset
 
 
 class PeriodoAcademicoViewSet(viewsets.ModelViewSet):
@@ -95,16 +126,39 @@ class AsignaturaViewSet(viewsets.ModelViewSet):
             'periodo_academico'
         ).prefetch_related('carreras__facultad')
         
-        # Verificar si el usuario es coordinador (revisar ambos campos: rol y roles)
-        es_coordinador = False
-        if hasattr(self.request.user, 'roles') and self.request.user.roles.exists():
-            es_coordinador = self.request.user.roles.filter(tipo='coordinador').exists()
-        elif self.request.user.rol == 'coordinador':
-            es_coordinador = True
+        user = self.request.user
         
-        # Coordinador solo ve asignaturas de su facultad (a través de carreras)
-        if es_coordinador and hasattr(self.request.user, 'facultad') and self.request.user.facultad:
-            queryset = queryset.filter(carreras__facultad=self.request.user.facultad).distinct()
+        # Verificar roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Super Admin ve todas las asignaturas
+        if 'super_admin' in user_roles:
+            return queryset
+        
+        # Coordinador solo ve asignaturas de carreras de su facultad
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(carreras__facultad=user.facultad).distinct()
+            # Si no tiene facultad, no ver nada
+            return Asignatura.objects.none()
+        
+        # Admin ve asignaturas de su facultad
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(carreras__facultad=user.facultad).distinct()
+            # Si no tiene facultad asignada, ve todas
+            return queryset
+        
+        # Profesor/Docente solo ve SUS asignaturas
+        if any(rol in ['profesor', 'docente'] for rol in user_roles):
+            return queryset.filter(
+                Q(docente_responsable=user) | 
+                Q(profesores_adicionales=user)
+            ).distinct()
         
         return queryset
     
@@ -512,18 +566,73 @@ class CarreraViewSet(viewsets.ModelViewSet):
         """Filtrar carreras según el rol del usuario"""
         queryset = Carrera.objects.select_related('facultad')
         
-        # Verificar si el usuario es coordinador (revisar ambos campos: rol y roles)
-        es_coordinador = False
-        if hasattr(self.request.user, 'roles') and self.request.user.roles.exists():
-            es_coordinador = self.request.user.roles.filter(tipo='coordinador').exists()
-        elif self.request.user.rol == 'coordinador':
-            es_coordinador = True
+        user = self.request.user
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Super Admin ve todas las carreras
+        if 'super_admin' in user_roles:
+            return queryset
+        
+        # Admin ve carreras de su facultad
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(facultad=user.facultad)
+            # Si no tiene facultad asignada, ve todas
+            return queryset
         
         # Coordinador solo ve carreras de su facultad
-        if es_coordinador and hasattr(self.request.user, 'facultad') and self.request.user.facultad:
-            queryset = queryset.filter(facultad=self.request.user.facultad)
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(facultad=user.facultad)
+            # Si no tiene facultad, no ver nada
+            return Carrera.objects.none()
         
         return queryset
+    
+    def perform_create(self, serializer):
+        """Validar que coordinador solo cree carreras para su facultad"""
+        user = self.request.user
+        facultad_id = serializer.validated_data.get('facultad').id
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Coordinador solo puede crear carreras para su facultad
+        if 'coordinador' in user_roles:
+            if not user.facultad or user.facultad.id != facultad_id:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("El coordinador solo puede crear carreras de su facultad")
+        
+        # Admin solo puede crear carreras para su facultad (si está asignado)
+        if 'admin' in user_roles:
+            if user.facultad and user.facultad.id != facultad_id:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("El administrador solo puede crear carreras de su facultad")
+        
+        serializer.save()
+    
+    def perform_update(self, serializer):
+        """Validar que no cambien la facultad de la carrera"""
+        user = self.request.user
+        instance = self.get_object()
+        facultad_id = serializer.validated_data.get('facultad', instance.facultad).id
+        
+        # Validar que coordinador/admin no cambien la facultad a otra
+        if facultad_id != instance.facultad.id:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("No se puede cambiar la facultad de una carrera existente")
+        
+        serializer.save()
 
 
 class PlanCarreraAsignaturaViewSet(viewsets.ModelViewSet):
@@ -543,15 +652,29 @@ class PlanCarreraAsignaturaViewSet(viewsets.ModelViewSet):
         """Filtrar planes según el rol del usuario"""
         queryset = PlanCarreraAsignatura.objects.select_related('carrera', 'asignatura')
         
-        # Verificar si el usuario es coordinador (revisar ambos campos: rol y roles)
-        es_coordinador = False
-        if hasattr(self.request.user, 'roles') and self.request.user.roles.exists():
-            es_coordinador = self.request.user.roles.filter(tipo='coordinador').exists()
-        elif self.request.user.rol == 'coordinador':
-            es_coordinador = True
+        user = self.request.user
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Super Admin ve todos los planes
+        if 'super_admin' in user_roles:
+            return queryset
+        
+        # Admin ve planes de carreras de su facultad
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(carrera__facultad=user.facultad)
+            return queryset
         
         # Coordinador solo ve planes de carreras de su facultad
-        if es_coordinador and hasattr(self.request.user, 'facultad') and self.request.user.facultad:
-            queryset = queryset.filter(carrera__facultad=self.request.user.facultad)
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(carrera__facultad=user.facultad)
+            return PlanCarreraAsignatura.objects.none()
         
         return queryset

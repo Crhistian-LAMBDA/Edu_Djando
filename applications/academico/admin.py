@@ -7,9 +7,21 @@ from .models import Facultad, Asignatura, Carrera, PlanCarreraAsignatura, Profes
 
 @admin.register(Facultad)
 class FacultadAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'codigo', 'estado', 'fecha_creacion')
-    search_fields = ('nombre', 'codigo')
+    list_display = ('nombre', 'codigo', 'coordinador', 'estado', 'fecha_creacion')
+    search_fields = ('nombre', 'codigo', 'coordinador__username')
     list_filter = ('estado',)
+    fieldsets = (
+        ('Información Básica', {
+            'fields': ('nombre', 'codigo', 'descripcion')
+        }),
+        ('Gestión', {
+            'fields': ('coordinador', 'estado')
+        }),
+        ('Metadata', {
+            'fields': ('fecha_creacion',),
+            'classes': ('collapse',)
+        }),
+    )
 
 
 @admin.register(Asignatura)

@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'applications.usuarios',
     'applications.academico',
+    'applications.evaluaciones',
 ]
 
 MIDDLEWARE = [

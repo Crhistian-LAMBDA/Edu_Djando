@@ -20,6 +20,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from applications.usuarios.api.router import router as usuarios_router
 from applications.academico.api.router import router as academico_router
+from applications.evaluaciones.api.router import router as evaluaciones_router
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -28,6 +29,8 @@ urlpatterns = [
     path('api/', include(usuarios_router.urls)),
     # API REST - Académico
     path('api/', include(academico_router.urls)),
+    # API REST - Evaluaciones
+    path('api/', include(evaluaciones_router.urls)),
     
     # JWT refresh (SimpleJWT estándar)
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

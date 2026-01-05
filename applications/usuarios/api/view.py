@@ -69,10 +69,21 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             if user.is_superuser or user.rol == 'super_admin':
                 queryset = Usuario.objects.all()
             elif user.rol == 'admin':
-                queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
+                # Admin solo ve usuarios de su facultad
+                if user.facultad:
+                    queryset = Usuario.objects.filter(
+                        Q(facultad=user.facultad) | Q(facultad__isnull=True)
+                    )
+                else:
+                    queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
             elif user.rol == 'coordinador':
-                # Coordinador ve estudiantes de su carrera y profesores de su facultad
-                queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
+                # Coordinador ve usuarios de su facultad
+                if user.facultad:
+                    queryset = Usuario.objects.filter(
+                        Q(facultad=user.facultad) | Q(facultad__isnull=True)
+                    )
+                else:
+                    queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
             else:
                 queryset = Usuario.objects.filter(id=user.id)
             
