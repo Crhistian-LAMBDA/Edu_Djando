@@ -2,7 +2,7 @@
 Configuración del admin para evaluaciones
 """
 from django.contrib import admin
-from applications.evaluaciones.models import Tarea
+from applications.evaluaciones.models import Tarea, EntregaTarea
 
 
 @admin.register(Tarea)
@@ -30,5 +30,26 @@ class TareaAdmin(admin.ModelAdmin):
         ('Metadata', {
             'fields': ('fecha_creacion', 'fecha_actualizacion'),
             'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(EntregaTarea)
+class EntregaTareaAdmin(admin.ModelAdmin):
+    list_display = ['estudiante', 'tarea', 'fecha_entrega', 'estado_entrega', 'calificacion', 'fue_tardia']
+    list_filter = ['estado_entrega', 'tarea__asignatura', 'fecha_entrega']
+    search_fields = ['estudiante__username', 'estudiante__first_name', 'estudiante__last_name', 'tarea__titulo']
+    date_hierarchy = 'fecha_entrega'
+    readonly_fields = ['fecha_entrega', 'fue_tardia']
+    
+    fieldsets = (
+        ('Información de Entrega', {
+            'fields': ('tarea', 'estudiante', 'archivo_entrega', 'comentarios_estudiante')
+        }),
+        ('Estado y Fechas', {
+            'fields': ('estado_entrega', 'fecha_entrega', 'fue_tardia')
+        }),
+        ('Calificación', {
+            'fields': ('calificacion', 'comentarios_docente', 'fecha_calificacion')
         }),
     )

@@ -87,6 +87,7 @@ class FacultadViewSet(viewsets.ModelViewSet):
         return queryset
 
 
+
 class PeriodoAcademicoViewSet(viewsets.ModelViewSet):
     """ViewSet para gestionar Períodos Académicos"""
     queryset = PeriodoAcademico.objects.all()
@@ -95,6 +96,38 @@ class PeriodoAcademicoViewSet(viewsets.ModelViewSet):
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['nombre', 'descripcion']
     ordering = ['-fecha_inicio']
+
+    @action(detail=True, methods=['post'], url_path='activar')
+    def activar(self, request, pk=None):
+        """
+        Activa este periodo académico y desactiva los demás. Solo super_admin, admin y coordinador pueden hacerlo.
+        """
+        user = request.user
+        # Verificar roles
+        roles = [r.tipo for r in getattr(user, 'roles', []).all()] if hasattr(user, 'roles') else []
+        if not (user.is_superuser or 'super_admin' in roles or 'admin' in roles or 'coordinador' in roles):
+            return Response({'detail': 'No tiene permisos para activar periodos.'}, status=status.HTTP_403_FORBIDDEN)
+
+        PeriodoAcademico.objects.update(activo=False)
+        periodo = self.get_object()
+        periodo.activo = True
+        periodo.save()
+        return Response({'detail': f'Periodo {periodo.nombre} activado.'})
+
+    @action(detail=True, methods=['post'], url_path='desactivar')
+    def desactivar(self, request, pk=None):
+        """
+        Desactiva este periodo académico. Solo super_admin, admin y coordinador pueden hacerlo.
+        """
+        user = request.user
+        roles = [r.tipo for r in getattr(user, 'roles', []).all()] if hasattr(user, 'roles') else []
+        if not (user.is_superuser or 'super_admin' in roles or 'admin' in roles or 'coordinador' in roles):
+            return Response({'detail': 'No tiene permisos para desactivar periodos.'}, status=status.HTTP_403_FORBIDDEN)
+
+        periodo = self.get_object()
+        periodo.activo = False
+        periodo.save()
+        return Response({'detail': f'Periodo {periodo.nombre} desactivado.'})
 
 
 class AsignaturaViewSet(viewsets.ModelViewSet):
@@ -119,108 +152,53 @@ class AsignaturaViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Optimiza queries con select_related para evitar N+1 queries
-        Filtra asignaturas según el rol del usuario
+        Filtra asignaturas según el rol del usuario. Para estudiantes, solo muestra asignaturas activas de su carrera.
         """
         queryset = Asignatura.objects.select_related(
-            'docente_responsable', 
             'periodo_academico'
         ).prefetch_related('carreras__facultad')
-        
+
         user = self.request.user
-        
+
         # Verificar roles del usuario
         user_roles = []
         if hasattr(user, 'roles') and user.roles.exists():
             user_roles = [r.tipo for r in user.roles.all()]
         elif hasattr(user, 'rol'):
             user_roles = [user.rol]
-        
+
         # Super Admin ve todas las asignaturas
         if 'super_admin' in user_roles:
             return queryset
-        
+
         # Coordinador solo ve asignaturas de carreras de su facultad
         if 'coordinador' in user_roles:
             if user.facultad:
                 return queryset.filter(carreras__facultad=user.facultad).distinct()
-            # Si no tiene facultad, no ver nada
             return Asignatura.objects.none()
-        
+
         # Admin ve asignaturas de su facultad
         if 'admin' in user_roles:
             if user.facultad:
                 return queryset.filter(carreras__facultad=user.facultad).distinct()
-            # Si no tiene facultad asignada, ve todas
             return queryset
-        
-        # Profesor/Docente solo ve SUS asignaturas
+
+        # Profesor/Docente solo ve SUS asignaturas (por tabla intermedia)
         if any(rol in ['profesor', 'docente'] for rol in user_roles):
-            return queryset.filter(
-                Q(docente_responsable=user) | 
-                Q(profesores_adicionales=user)
-            ).distinct()
-        
+            asignaturas_ids = ProfesorAsignatura.objects.filter(profesor=user).values_list('asignatura_id', flat=True)
+            return queryset.filter(id__in=asignaturas_ids).distinct()
+
+        # Estudiante: solo ve asignaturas activas de su carrera
+        if 'estudiante' in user_roles:
+            carrera = getattr(user, 'carrera', None)
+            if carrera:
+                return queryset.filter(carreras=carrera, estado=True).distinct()
+            return Asignatura.objects.none()
+
         return queryset
     
-    def create(self, request, *args, **kwargs):
-        """
-        Override de create para enviar email al docente cuando se asigna
-        """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-    
-    def perform_create(self, serializer):
-        """
-        Guarda la asignatura y envía email si hay docente responsable
-        """
-        asignatura = serializer.save()
-        self._enviar_email_docente(asignatura)
-    
-    def update(self, request, *args, **kwargs):
-        """
-        Override de update para enviar email si cambia el docente o estado
-        """
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        docente_anterior = instance.docente_responsable
-        estado_anterior = instance.estado
-        
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        
-        # Si cambió el docente responsable, enviar email al nuevo docente
-        if instance.docente_responsable != docente_anterior:
-            self._enviar_email_docente(instance)
-        
-        # Si se desactivó, notificar al docente responsable
-        if estado_anterior == True and instance.estado == False:
-            if instance.docente_responsable:
-                send_asignatura_desactivacion_email.delay(
-                    docente_email=instance.docente_responsable.email,
-                    docente_nombre=instance.docente_responsable.first_name,
-                    asignatura_nombre=instance.nombre,
-                    asignatura_codigo=instance.codigo
-                )
-        
-        return Response(serializer.data)
-    
-    def _enviar_email_docente(self, asignatura):
-        """
-        Envía email al docente responsable de forma asíncrona
-        """
-        if asignatura.docente_responsable:
-            send_asignatura_assignment_email.delay(
-                docente_email=asignatura.docente_responsable.email,
-                docente_nombre=asignatura.docente_responsable.first_name,
-                asignatura_nombre=asignatura.nombre,
-                asignatura_codigo=asignatura.codigo,
-                periodo_nombre=asignatura.periodo_academico.nombre,
-                descripcion=asignatura.descripcion or ''
-            )
+
+    # Métodos de email eliminados porque la asignación de profesores ahora es solo por ProfesorAsignatura
     
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def importar(self, request):

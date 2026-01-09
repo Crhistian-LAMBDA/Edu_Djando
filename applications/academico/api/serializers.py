@@ -40,26 +40,11 @@ class PeriodoAcademicoSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'fecha_creacion']
 
 
-class ProfesoresAdicionalesField(serializers.PrimaryKeyRelatedField):
-    """Campo personalizado para profesores adicionales con queryset filtrado"""
-    def get_queryset(self):
-        # Acepta usuarios con rol académico. En la BD usamos tanto 'profesor' como 'docente'.
-        return Usuario.objects.filter(
-            models.Q(rol__in=['profesor', 'docente']) | models.Q(roles__tipo='profesor')
-        ).distinct()
 
 
 class AsignaturaSerializer(serializers.ModelSerializer):
     # Campos read-only que muestran datos relacionados
     periodo_academico_nombre = serializers.CharField(source='periodo_academico.nombre', read_only=True)
-    docente_responsable_nombre = serializers.SerializerMethodField(read_only=True)
-    profesores_adicionales_ids = ProfesoresAdicionalesField(
-        source='profesores_adicionales',
-        many=True,
-        required=False,
-        allow_empty=True
-    )
-    profesores_adicionales_nombres = serializers.SerializerMethodField(read_only=True)
     carreras = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=Carrera.objects.all(),
@@ -78,33 +63,54 @@ class AsignaturaSerializer(serializers.ModelSerializer):
     prerrequisitos_nombres = serializers.SerializerMethodField(read_only=True)
     # Semestre desde PlanCarreraAsignatura
     semestre = serializers.SerializerMethodField(read_only=True)
+    profesores = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
+    profesores_info = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Asignatura
         fields = [
             'id', 'nombre', 'codigo', 'descripcion', 'creditos', 'estado',
-            'docente_responsable', 'docente_responsable_nombre',
-            'profesores_adicionales_ids', 'profesores_adicionales_nombres',
             'periodo_academico', 'periodo_academico_nombre',
             'carreras', 'carrera_nombre', 'carrera_facultad', 'carrera_id',
             'prerrequisitos', 'prerrequisitos_nombres',
             'semestre',
+            'profesores', 'profesores_info',
             'fecha_creacion'
         ]
         read_only_fields = ['id', 'fecha_creacion']
     
-    def get_docente_responsable_nombre(self, obj):
-        """Retorna nombre completo del docente responsable"""
-        if obj.docente_responsable:
-            return f"{obj.docente_responsable.first_name} {obj.docente_responsable.last_name}".strip() or obj.docente_responsable.username
-        return None
-    
-    def get_profesores_adicionales_nombres(self, obj):
-        """Retorna nombres de profesores adicionales"""
+
+    def get_profesores_info(self, obj):
+        """Retorna la lista de profesores asociados a la asignatura mediante ProfesorAsignatura"""
+        profesores = ProfesorAsignatura.objects.filter(asignatura=obj)
         return [
-            f"{p.first_name} {p.last_name}".strip() or p.username 
-            for p in obj.profesores_adicionales.all()
+            {
+                'id': pa.profesor.id,
+                'username': pa.profesor.username,
+                'nombre_completo': f"{pa.profesor.first_name} {pa.profesor.last_name}".strip(),
+                'fecha_asignacion': pa.fecha_asignacion,
+            }
+            for pa in profesores
         ]
+
+    def create(self, validated_data):
+        profesores_ids = validated_data.pop('profesores', [])
+        asignatura = super().create(validated_data)
+        # Limpiar relaciones previas (por si acaso)
+        ProfesorAsignatura.objects.filter(asignatura=asignatura).delete()
+        for profesor_id in profesores_ids:
+            ProfesorAsignatura.objects.create(asignatura=asignatura, profesor_id=profesor_id)
+        return asignatura
+
+    def update(self, instance, validated_data):
+        profesores_ids = validated_data.pop('profesores', None)
+        asignatura = super().update(instance, validated_data)
+        if profesores_ids is not None:
+            # Si la lista está vacía, elimina todas las relaciones
+            ProfesorAsignatura.objects.filter(asignatura=asignatura).delete()
+            for profesor_id in profesores_ids:
+                ProfesorAsignatura.objects.create(asignatura=asignatura, profesor_id=profesor_id)
+        return asignatura
     
     def get_carrera_nombre(self, obj):
         """Retorna el nombre de la primera carrera asociada"""
@@ -143,12 +149,6 @@ class AsignaturaSerializer(serializers.ModelSerializer):
         
         if queryset.exists():
             raise serializers.ValidationError("Este código de asignatura ya existe.")
-        return value
-    
-    def validate_docente_responsable(self, value):
-        """Validar que el docente sea realmente un docente"""
-        if value and value.rol not in ['profesor', 'docente']:
-            raise serializers.ValidationError("El docente responsable debe tener rol de profesor/docente.")
         return value
 
 

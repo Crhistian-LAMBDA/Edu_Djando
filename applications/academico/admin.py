@@ -2,7 +2,14 @@
 Registro en el admin de Django
 """
 from django.contrib import admin
-from .models import Facultad, Asignatura, Carrera, PlanCarreraAsignatura, ProfesorAsignatura
+from .models import Facultad, Asignatura, Carrera, PlanCarreraAsignatura, ProfesorAsignatura, PeriodoAcademico
+
+# Registrar PeriodoAcademico en el admin
+@admin.register(PeriodoAcademico)
+class PeriodoAcademicoAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'fecha_inicio', 'fecha_fin', 'activo', 'fecha_creacion')
+    search_fields = ('nombre',)
+    list_filter = ('activo',)
 
 
 @admin.register(Facultad)

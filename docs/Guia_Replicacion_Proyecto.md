@@ -1444,3 +1444,114 @@ Esto es transparente para el usuario: la sesión se mantiene activa sin cortes h
 - El refresco proactivo evita `401` por expiración del access, pero no extiende la vida del refresh.
 
 ---
+
+````
+
+---
+
+## 19. Matrícula y Visualización de Asignaturas (Extra)
+
+### Objetivo
+Permitir que el estudiante matricule asignaturas del período académico activo y visualice sus asignaturas inscritas desde el frontend, de forma modular y extensible.
+
+### Implementación Backend
+
+**1. Nuevo módulo Django: `applications/matriculas/`**
+- Estructura:
+  - `models.py`: Modelo `Matricula` (estudiante, asignatura, periodo, fecha, estado)
+  - `serializers.py`: Serializador para exponer y validar matrículas
+  - `views.py`: ViewSet con permisos y filtrado por usuario
+  - `api/router.py`: Router para exponer `/api/matriculas/`
+  - `migrations/`, `__init__.py`, `apps.py`
+
+**2. Modelo Matricula**
+```python
+class Matricula(models.Model):
+    estudiante = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='matriculas')
+    asignatura = models.ForeignKey(Asignatura, on_delete=models.CASCADE, related_name='matriculas')
+    periodo = models.ForeignKey(PeriodoAcademico, on_delete=models.CASCADE, related_name='matriculas')
+    fecha = models.DateTimeField(auto_now_add=True)
+    estado = models.CharField(max_length=20, default='activa')
+    class Meta:
+        unique_together = ('estudiante', 'asignatura', 'periodo')
+````
+
+**3. Serializador y ViewSet**
+
+- Serializador: expone todos los campos, `fecha` solo lectura.
+- ViewSet: filtra por usuario autenticado, asigna estudiante automáticamente en `perform_create`.
+
+**4. Integración en settings y urls**
+
+- Agregar `'applications.matriculas'` a `INSTALLED_APPS`.
+- Incluir rutas en `edu/edu/urls.py`:
+
+```python
+from applications.matriculas.api.router import router as matriculas_router
+path('api/', include(matriculas_router.urls)),
+```
+
+**5. Migraciones**
+
+```bash
+python manage.py makemigrations matriculas
+python manage.py migrate matriculas
+```
+
+---
+
+### Implementación Frontend
+
+**1. Nuevo módulo React: `src/features/matriculas/`**
+
+- Estructura:
+  - `pages/MatriculaPage.js`: Selección y matrícula de asignaturas
+  - `pages/MisAsignaturasPage.js`: Visualización de asignaturas inscritas
+  - `services/matriculasService.js`: Consumo de API REST
+  - `components/`, `hooks/` (extensible)
+
+**2. Integración de rutas y menú**
+
+- Rutas protegidas en `src/routes/routes.js`:
+
+```jsx
+<Route path="/matricula" element={<ProtectedRoute><AppLayout><MatriculaPage /></AppLayout></ProtectedRoute>} />
+<Route path="/mis-asignaturas" element={<ProtectedRoute><AppLayout><MisAsignaturasPage /></AppLayout></ProtectedRoute>} />
+```
+
+- Menú lateral en `AppLayout.js` (solo estudiantes):
+  - “Matricular Asignaturas”
+  - “Mis Asignaturas”
+
+**3. Lógica de MatriculaPage**
+
+- Lista asignaturas y períodos activos.
+- Permite seleccionar varias asignaturas y matricularlas en lote.
+- Modular: preparado para agregar validaciones de cupos, horarios, créditos.
+
+**4. Lógica de MisAsignaturasPage**
+
+- Muestra asignaturas inscritas del estudiante en el período seleccionado.
+- Permite ver rápidamente el estado de su matrícula.
+
+---
+
+### Flujo para usuarios y pruebas
+
+**Flujo para el estudiante:**
+
+1. Inicia sesión y accede al menú lateral.
+2. Entra a “Matricular Asignaturas”, selecciona el período y las asignaturas deseadas, y pulsa “Matricular seleccionadas”.
+3. Visualiza sus asignaturas inscritas en “Mis Asignaturas”.
+
+**Pruebas recomendadas:**
+
+- Matricular una o varias asignaturas y verificar que aparecen en “Mis Asignaturas”.
+- Intentar matricular la misma asignatura dos veces (debe evitarse por backend).
+- Probar con diferentes usuarios para asegurar que cada uno solo ve sus propias asignaturas.
+- Validar que el flujo básico funciona antes de agregar validaciones avanzadas.
+
+**Nota:**
+La estructura es modular y lista para extender con validaciones de cupos, horarios y créditos en el futuro, sin romper lo ya funcional.
+
+---

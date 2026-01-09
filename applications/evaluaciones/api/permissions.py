@@ -59,9 +59,11 @@ class TareaPermission(BasePermission):
             # Si no tiene facultad asignada, puede todo
             return True
         
-        # Docentes solo pueden gestionar tareas de SUS asignaturas
+        # Docentes solo pueden gestionar tareas de SUS asignaturas (vía ProfesorAsignatura)
+        from applications.academico.models import ProfesorAsignatura
         asignatura = obj.asignatura
-        es_docente_responsable = asignatura.docente_responsable == user
-        es_profesor_adicional = asignatura.profesores_adicionales.filter(id=user.id).exists()
-        
-        return es_docente_responsable or es_profesor_adicional
+        es_profesor = ProfesorAsignatura.objects.filter(
+            profesor=user,
+            asignatura=asignatura
+        ).exists()
+        return es_profesor
