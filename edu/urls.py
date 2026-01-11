@@ -14,6 +14,7 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -23,6 +24,9 @@ from applications.academico.api.router import router as academico_router
 from applications.evaluaciones.api.router import router as evaluaciones_router, mis_tareas_urlpatterns
 from applications.matriculas.api.router import router as matriculas_router
 
+# Para servir archivos de medios en desarrollo
+from django.conf import settings
+from django.conf.urls.static import static
 urlpatterns = [
     path('admin/', admin.site.urls),
     
@@ -35,6 +39,8 @@ urlpatterns = [
     path('api/', include(mis_tareas_urlpatterns)),
     # API REST - Matrículas
     path('api/', include(matriculas_router.urls)),
+    # API REST - Gestión de Entregas
+    path('api/gestion-entregas/', include('applications.gestion_entregas.urls')),
     
     # JWT refresh (SimpleJWT estándar)
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
@@ -43,5 +49,10 @@ urlpatterns = [
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+
 ]
+
+# Servir archivos de medios (solo en desarrollo)
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
