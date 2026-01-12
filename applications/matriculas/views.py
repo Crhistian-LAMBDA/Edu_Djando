@@ -1,6 +1,6 @@
-# views.py para Matriculas
+"""ViewSets para Matrículas."""
 
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Matricula
@@ -14,10 +14,27 @@ class MatriculaViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # Si el usuario es admin, superuser o coordinador, ve todas las matrículas
-        if user.is_superuser or user.is_staff or (hasattr(user, 'rol') and user.rol in ['admin', 'coordinador']):
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+
+        if getattr(user, 'is_superuser', False) and 'super_admin' not in user_roles:
+            user_roles.append('super_admin')
+
+        # Super admin ve todo
+        if 'super_admin' in user_roles:
             return Matricula.objects.all()
-        # Si es estudiante, solo ve las propias
+
+        # Admin/Coordinador: alcance por facultad
+        if 'admin' in user_roles or 'coordinador' in user_roles:
+            facultad = getattr(user, 'facultad', None)
+            if not facultad:
+                return Matricula.objects.none()
+            return Matricula.objects.filter(estudiante__carrera__facultad=facultad).distinct()
+
+        # Estudiante: solo sus matrículas
         return Matricula.objects.filter(estudiante=user)
 
     def perform_create(self, serializer):

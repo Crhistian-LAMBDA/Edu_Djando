@@ -184,6 +184,14 @@ class EntregaTareaSerializer(serializers.ModelSerializer):
         if value.rol != 'estudiante':
             raise serializers.ValidationError('Solo los estudiantes pueden entregar tareas.')
         return value
+
+    def to_representation(self, instance):
+        """Compat HU-09: expone aliases sin cambiar nombres existentes."""
+        rep = super().to_representation(instance)
+        rep['nota'] = rep.get('calificacion')
+        rep['retroalimentacion_docente'] = rep.get('comentarios_docente')
+        rep['estado_calificacion'] = rep.get('estado_entrega')
+        return rep
     
     def validate_archivo_entrega(self, value):
         """Validar tamaño y tipo de archivo"""

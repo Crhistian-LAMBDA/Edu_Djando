@@ -163,8 +163,15 @@ class AuthViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # NUEVA VALIDACIÓN: Usuario debe tener al menos un rol asignado
-        if user.roles.count() == 0:
+        # VALIDACIÓN: Usuario debe tener al menos un rol (M2M) o rol legacy.
+        # Importante: no romper usuarios antiguos; usar helpers seguros.
+        roles_tipos = []
+        try:
+            roles_tipos = user.get_roles_tipos()
+        except Exception:
+            roles_tipos = []
+
+        if len(roles_tipos) == 0 and not getattr(user, 'rol', None):
             return Response(
                 {'detail': 'Tu cuenta aún no tiene roles asignados. Por favor contacta con un administrador.'},
                 status=status.HTTP_403_FORBIDDEN
@@ -293,7 +300,11 @@ class AuthViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        if not request.user.tiene_alguno_de_estos_roles(['super_admin', 'admin']):
+        if not (
+            request.user.is_superuser
+            or request.user.tiene_alguno_de_estos_roles(['super_admin', 'admin'])
+            or getattr(request.user, 'rol', None) in ['super_admin', 'admin']
+        ):
             return Response(
                 {'detail': 'Solo Super Admin o Admin pueden aprobar usuarios.'},
                 status=status.HTTP_403_FORBIDDEN
@@ -308,6 +319,17 @@ class AuthViewSet(viewsets.GenericViewSet):
                 {'detail': 'usuario_id y roles son requeridos.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # Regla HU-05: no permitir asignar roles iguales/superiores al aprobador
+        try:
+            for r in roles:
+                if not request.user.puede_asignar_rol(r):
+                    return Response(
+                        {'detail': 'No puedes asignar un rol igual o superior al tuyo.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+        except Exception:
+            pass
         
         try:
             usuario = Usuario.objects.get(id=usuario_id)
@@ -321,6 +343,18 @@ class AuthViewSet(viewsets.GenericViewSet):
         from applications.usuarios.models import Rol
         rol_objects = Rol.objects.filter(tipo__in=roles)
         usuario.roles.set(rol_objects)
+
+        # Sincronizar rol legacy al rol principal (más alto)
+        try:
+            from applications.usuarios.models import get_role_level
+            principal = None
+            for r in roles:
+                if principal is None or get_role_level(r) > get_role_level(principal):
+                    principal = r
+            if principal:
+                usuario.rol = principal
+        except Exception:
+            pass
         
         # Asignar facultad si se proporciona
         if facultad_id:

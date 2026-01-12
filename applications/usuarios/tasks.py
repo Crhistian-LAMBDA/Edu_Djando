@@ -4,24 +4,34 @@ from django.conf import settings
 
 
 @shared_task
-def send_welcome_email(user_email, username, first_name, password):
+def send_welcome_email(user_email, username, first_name, password=None, pending_approval=False):
     """
-    Tarea asíncrona para enviar correo de bienvenida a nuevos usuarios con contraseña
+    Tarea asíncrona para enviar correo de bienvenida a nuevos usuarios.
+
+    Nota: por seguridad, la contraseña es opcional y, si no se provee, no se incluye en el correo.
     """
     subject = '¡Bienvenido al Sistema de Gestión Escolar!'
+
+    pending_line = (
+        "\n\nTu cuenta está pendiente de aprobación por un administrador. Te avisaremos cuando esté activa."
+        if pending_approval
+        else ""
+    )
+
+    credentials_text = (
+        f"\n\nCredenciales de acceso:\nUsuario: {username}\nContraseña: {password}"
+        if password
+        else ""
+    )
     
     message = f"""
     Hola {first_name},
 
     ¡Bienvenido al Sistema de Gestión Escolar!
 
-    Tu cuenta ha sido creada exitosamente.
+    Tu cuenta ha sido creada exitosamente.{pending_line}{credentials_text}
 
-    Credenciales de acceso:
-    Usuario: {username}
-    Contraseña: {password}
-
-    Ya puedes acceder al sistema con tus credenciales.
+    Ya puedes acceder al sistema con tu usuario y contraseña.
 
     Saludos,
     El equipo de Colegio Django
@@ -37,11 +47,20 @@ def send_welcome_email(user_email, username, first_name, password):
                     <p>Hola <strong>{first_name}</strong>,</p>
                     
                     <p>Tu cuenta ha sido creada exitosamente.</p>
+
+                    {(
+                        '<div style="background-color: #fff3cd; padding: 15px; border-left: 4px solid #FF9800; margin: 20px 0;">'
+                        '<p style="margin: 0;"><strong>⏳ Estado:</strong> Pendiente de aprobación</p>'
+                        '<p style="margin: 10px 0 0 0; font-size: 14px;">Te avisaremos cuando tu cuenta sea activada.</p>'
+                        '</div>'
+                    ) if pending_approval else ''}
                     
-                    <div style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #4CAF50; margin: 20px 0;">
-                        <p style="margin: 5px 0;"><strong>Usuario:</strong> {username}</p>
-                        <p style="margin: 5px 0;"><strong>Contraseña:</strong> {password}</p>
-                    </div>
+                    {(
+                        '<div style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #4CAF50; margin: 20px 0;">'
+                        f'<p style="margin: 5px 0;"><strong>Usuario:</strong> {username}</p>'
+                        f'<p style="margin: 5px 0;"><strong>Contraseña:</strong> {password}</p>'
+                        '</div>'
+                    ) if password else ''}
                     
                     <p>Ya puedes acceder al sistema con tus credenciales.</p>
                     

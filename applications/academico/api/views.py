@@ -167,6 +167,9 @@ class AsignaturaViewSet(viewsets.ModelViewSet):
         elif hasattr(user, 'rol'):
             user_roles = [user.rol]
 
+        if getattr(user, 'is_superuser', False) and 'super_admin' not in user_roles:
+            user_roles.append('super_admin')
+
         # Super Admin ve todas las asignaturas
         if 'super_admin' in user_roles:
             return queryset
@@ -181,7 +184,7 @@ class AsignaturaViewSet(viewsets.ModelViewSet):
         if 'admin' in user_roles:
             if user.facultad:
                 return queryset.filter(carreras__facultad=user.facultad).distinct()
-            return queryset
+            return Asignatura.objects.none()
 
         # Profesor/Docente solo ve SUS asignaturas (por tabla intermedia)
         if any(rol in ['profesor', 'docente'] for rol in user_roles):
@@ -552,6 +555,9 @@ class CarreraViewSet(viewsets.ModelViewSet):
             user_roles = [r.tipo for r in user.roles.all()]
         elif hasattr(user, 'rol'):
             user_roles = [user.rol]
+
+        if getattr(user, 'is_superuser', False) and 'super_admin' not in user_roles:
+            user_roles.append('super_admin')
         
         # Super Admin ve todas las carreras
         if 'super_admin' in user_roles:
@@ -561,8 +567,7 @@ class CarreraViewSet(viewsets.ModelViewSet):
         if 'admin' in user_roles:
             if user.facultad:
                 return queryset.filter(facultad=user.facultad)
-            # Si no tiene facultad asignada, ve todas
-            return queryset
+            return Carrera.objects.none()
         
         # Coordinador solo ve carreras de su facultad
         if 'coordinador' in user_roles:
@@ -638,6 +643,9 @@ class PlanCarreraAsignaturaViewSet(viewsets.ModelViewSet):
             user_roles = [r.tipo for r in user.roles.all()]
         elif hasattr(user, 'rol'):
             user_roles = [user.rol]
+
+        if getattr(user, 'is_superuser', False) and 'super_admin' not in user_roles:
+            user_roles.append('super_admin')
         
         # Super Admin ve todos los planes
         if 'super_admin' in user_roles:
@@ -647,7 +655,7 @@ class PlanCarreraAsignaturaViewSet(viewsets.ModelViewSet):
         if 'admin' in user_roles:
             if user.facultad:
                 return queryset.filter(carrera__facultad=user.facultad)
-            return queryset
+            return PlanCarreraAsignatura.objects.none()
         
         # Coordinador solo ve planes de carreras de su facultad
         if 'coordinador' in user_roles:

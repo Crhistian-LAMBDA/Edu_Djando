@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from applications.usuarios.models import Permiso, Rol
+from applications.usuarios.models import Permiso, Rol, get_role_level
 import re
 
 Usuario = get_user_model()
@@ -106,9 +106,14 @@ class RegistroSerializer(serializers.ModelSerializer):
         Crear un nuevo usuario como INACTIVO y SIN ROLES asignados
         Solo Super Admin/Admin pueden activarlo y asignar roles
         """
-        from applications.usuarios.tasks import send_approval_pending_email
+        from applications.usuarios.tasks import send_welcome_email
         
         password = validated_data.pop('password')
+
+        # Seguridad: ignorar cualquier rol/estado/is_active enviados por el cliente
+        validated_data.pop('rol', None)
+        validated_data.pop('estado', None)
+        validated_data.pop('is_active', None)
         
         # IMPORTANTE: El nuevo usuario siempre se crea INACTIVO
         validated_data['is_active'] = False
@@ -119,12 +124,20 @@ class RegistroSerializer(serializers.ModelSerializer):
             **validated_data,
             password=password
         )
-        
-        # Enviar correo avisando que está pendiente de aprobación
+
+        # Asegurar que no tenga roles asignados al registrarse
         try:
-            send_approval_pending_email.delay(
+            usuario.roles.clear()
+        except Exception:
+            pass
+        
+        # Enviar correo de bienvenida (pendiente de aprobación)
+        try:
+            send_welcome_email.delay(
                 user_email=usuario.email,
-                first_name=usuario.first_name or usuario.username
+                username=usuario.username,
+                first_name=usuario.first_name or usuario.username,
+                pending_approval=True,
             )
         except Exception:
             pass
@@ -140,7 +153,15 @@ class UsuarioSerializer(serializers.ModelSerializer):
     facultad_nombre = serializers.CharField(source='facultad.nombre', read_only=True)
     carrera_nombre = serializers.CharField(source='carrera.nombre', read_only=True)
     asignaturas_ids = serializers.SerializerMethodField()
-    roles = serializers.SerializerMethodField()
+    # `roles` se acepta en escritura como lista de strings (tipos).
+    # En lectura lo inyectamos manualmente en `to_representation` para evitar
+    # que DRF intente iterar el ManyRelatedManager (causa de 500 en login).
+    roles = serializers.ListField(
+        child=serializers.ChoiceField(choices=[c[0] for c in Rol.TIPOS_ROLES]),
+        required=False,
+        allow_empty=True,
+        write_only=True,
+    )
     asignaturas_matriculadas = serializers.SerializerMethodField()
     
     class Meta:
@@ -157,6 +178,47 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'id', 'fecha_creacion', 'date_joined', 'last_login'
         )
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Asegurar salida consistente: roles como lista de strings desde M2M
+        try:
+            data['roles'] = [r.tipo for r in instance.roles.all()]
+        except Exception:
+            data['roles'] = []
+        return data
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user_actual = getattr(request, 'user', None) if request else None
+
+        # Si no hay actor autenticado, no aplicamos reglas jerárquicas aquí.
+        if not user_actual or not getattr(user_actual, 'is_authenticated', False):
+            return attrs
+
+        # No permitir que el usuario intente tocar roles/rol sobre sí mismo (el View ya lo bloquea, esto refuerza).
+        if self.instance is not None and getattr(self.instance, 'id', None) == getattr(user_actual, 'id', None):
+            if 'rol' in attrs or 'roles' in attrs:
+                raise serializers.ValidationError({'roles': 'No puedes modificar tus propios roles.'})
+
+        # Validación jerárquica HU-05 para asignación de rol legacy
+        if 'rol' in attrs and attrs.get('rol'):
+            target_role = attrs.get('rol')
+            if not user_actual.puede_asignar_rol(target_role):
+                raise serializers.ValidationError({'rol': 'No puedes asignar un rol igual o superior al tuyo.'})
+            if target_role in ['super_admin', 'admin'] and user_actual.get_nivel_jerarquia() < get_role_level('super_admin'):
+                raise serializers.ValidationError({'rol': 'Solo super_admin puede asignar roles admin o super_admin.'})
+
+        # Validación jerárquica HU-05 para roles M2M
+        if 'roles' in attrs:
+            roles_list = attrs.get('roles') or []
+            for r in roles_list:
+                if not user_actual.puede_asignar_rol(r):
+                    raise serializers.ValidationError({'roles': 'No puedes asignar roles iguales o superiores al tuyo.'})
+                if r in ['super_admin', 'admin'] and user_actual.get_nivel_jerarquia() < get_role_level('super_admin'):
+                    raise serializers.ValidationError({'roles': 'Solo super_admin puede asignar roles admin o super_admin.'})
+
+        return attrs
+
     def validate_numero_documento(self, value):
         # Permitir que el propio usuario conserve su número, pero solo roles elevados pueden cambiarlo
         request = self.context.get('request')
@@ -170,9 +232,29 @@ class UsuarioSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Este número de documento ya está registrado.")
         return value
     
-    def get_roles(self, obj):
-        """Obtener lista de roles asignados al usuario"""
-        return [r.tipo for r in obj.roles.all()]
+    def update(self, instance, validated_data):
+        roles_tipos = validated_data.pop('roles', None)
+
+        # Actualización normal de campos
+        instance = super().update(instance, validated_data)
+
+        # Si se mandó `roles`, persistir en M2M
+        if roles_tipos is not None:
+            role_objs = list(Rol.objects.filter(tipo__in=roles_tipos))
+            if len(role_objs) != len(set(roles_tipos)):
+                raise serializers.ValidationError({'roles': 'Uno o más roles no existen.'})
+            instance.roles.set(role_objs)
+
+            # Sincronizar rol legacy al rol principal (más alto)
+            principal = None
+            for t in roles_tipos:
+                if principal is None or get_role_level(t) > get_role_level(principal):
+                    principal = t
+            if principal:
+                instance.rol = principal
+                instance.save(update_fields=['rol'])
+
+        return instance
 
     def get_asignaturas_ids(self, obj):
         """Obtener IDs de asignaturas asignadas al profesor"""
