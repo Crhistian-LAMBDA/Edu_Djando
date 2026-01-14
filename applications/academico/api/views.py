@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
+from django.db.models import Q
 import pandas as pd
 import io
 from applications.academico.models import (
@@ -54,6 +55,37 @@ class FacultadViewSet(viewsets.ModelViewSet):
         'list': 'ver_facultades',
         'retrieve': 'ver_facultades',
     }
+    
+    def get_queryset(self):
+        """Filtrar facultades según rol del usuario"""
+        queryset = Facultad.objects.all()
+        user = self.request.user
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Super Admin ve todas las facultades
+        if 'super_admin' in user_roles:
+            return queryset
+        
+        # Admin solo ve su propia facultad (solo lectura)
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(id=user.facultad.id)
+            return Facultad.objects.none()
+        
+        # Coordinador solo ve su propia facultad (solo lectura)
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(id=user.facultad.id)
+            return Facultad.objects.none()
+        
+        return queryset
+
 
 
 class PeriodoAcademicoViewSet(viewsets.ModelViewSet):
@@ -64,6 +96,38 @@ class PeriodoAcademicoViewSet(viewsets.ModelViewSet):
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['nombre', 'descripcion']
     ordering = ['-fecha_inicio']
+
+    @action(detail=True, methods=['post'], url_path='activar')
+    def activar(self, request, pk=None):
+        """
+        Activa este periodo académico y desactiva los demás. Solo super_admin, admin y coordinador pueden hacerlo.
+        """
+        user = request.user
+        # Verificar roles
+        roles = [r.tipo for r in getattr(user, 'roles', []).all()] if hasattr(user, 'roles') else []
+        if not (user.is_superuser or 'super_admin' in roles or 'admin' in roles or 'coordinador' in roles):
+            return Response({'detail': 'No tiene permisos para activar periodos.'}, status=status.HTTP_403_FORBIDDEN)
+
+        PeriodoAcademico.objects.update(activo=False)
+        periodo = self.get_object()
+        periodo.activo = True
+        periodo.save()
+        return Response({'detail': f'Periodo {periodo.nombre} activado.'})
+
+    @action(detail=True, methods=['post'], url_path='desactivar')
+    def desactivar(self, request, pk=None):
+        """
+        Desactiva este periodo académico. Solo super_admin, admin y coordinador pueden hacerlo.
+        """
+        user = request.user
+        roles = [r.tipo for r in getattr(user, 'roles', []).all()] if hasattr(user, 'roles') else []
+        if not (user.is_superuser or 'super_admin' in roles or 'admin' in roles or 'coordinador' in roles):
+            return Response({'detail': 'No tiene permisos para desactivar periodos.'}, status=status.HTTP_403_FORBIDDEN)
+
+        periodo = self.get_object()
+        periodo.activo = False
+        periodo.save()
+        return Response({'detail': f'Periodo {periodo.nombre} desactivado.'})
 
 
 class AsignaturaViewSet(viewsets.ModelViewSet):
@@ -88,85 +152,53 @@ class AsignaturaViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Optimiza queries con select_related para evitar N+1 queries
-        Filtra asignaturas según el rol del usuario
+        Filtra asignaturas según el rol del usuario. Para estudiantes, solo muestra asignaturas activas de su carrera.
         """
         queryset = Asignatura.objects.select_related(
-            'docente_responsable', 
             'periodo_academico'
         ).prefetch_related('carreras__facultad')
-        
-        # Verificar si el usuario es coordinador (revisar ambos campos: rol y roles)
-        es_coordinador = False
-        if hasattr(self.request.user, 'roles') and self.request.user.roles.exists():
-            es_coordinador = self.request.user.roles.filter(tipo='coordinador').exists()
-        elif self.request.user.rol == 'coordinador':
-            es_coordinador = True
-        
-        # Coordinador solo ve asignaturas de su facultad (a través de carreras)
-        if es_coordinador and hasattr(self.request.user, 'facultad') and self.request.user.facultad:
-            queryset = queryset.filter(carreras__facultad=self.request.user.facultad).distinct()
-        
+
+        user = self.request.user
+
+        # Verificar roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+
+        # Super Admin ve todas las asignaturas
+        if 'super_admin' in user_roles:
+            return queryset
+
+        # Coordinador solo ve asignaturas de carreras de su facultad
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(carreras__facultad=user.facultad).distinct()
+            return Asignatura.objects.none()
+
+        # Admin ve asignaturas de su facultad
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(carreras__facultad=user.facultad).distinct()
+            return queryset
+
+        # Profesor/Docente solo ve SUS asignaturas (por tabla intermedia)
+        if any(rol in ['profesor', 'docente'] for rol in user_roles):
+            asignaturas_ids = ProfesorAsignatura.objects.filter(profesor=user).values_list('asignatura_id', flat=True)
+            return queryset.filter(id__in=asignaturas_ids).distinct()
+
+        # Estudiante: solo ve asignaturas activas de su carrera
+        if 'estudiante' in user_roles:
+            carrera = getattr(user, 'carrera', None)
+            if carrera:
+                return queryset.filter(carreras=carrera, estado=True).distinct()
+            return Asignatura.objects.none()
+
         return queryset
     
-    def create(self, request, *args, **kwargs):
-        """
-        Override de create para enviar email al docente cuando se asigna
-        """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-    
-    def perform_create(self, serializer):
-        """
-        Guarda la asignatura y envía email si hay docente responsable
-        """
-        asignatura = serializer.save()
-        self._enviar_email_docente(asignatura)
-    
-    def update(self, request, *args, **kwargs):
-        """
-        Override de update para enviar email si cambia el docente o estado
-        """
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        docente_anterior = instance.docente_responsable
-        estado_anterior = instance.estado
-        
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        
-        # Si cambió el docente responsable, enviar email al nuevo docente
-        if instance.docente_responsable != docente_anterior:
-            self._enviar_email_docente(instance)
-        
-        # Si se desactivó, notificar al docente responsable
-        if estado_anterior == True and instance.estado == False:
-            if instance.docente_responsable:
-                send_asignatura_desactivacion_email.delay(
-                    docente_email=instance.docente_responsable.email,
-                    docente_nombre=instance.docente_responsable.first_name,
-                    asignatura_nombre=instance.nombre,
-                    asignatura_codigo=instance.codigo
-                )
-        
-        return Response(serializer.data)
-    
-    def _enviar_email_docente(self, asignatura):
-        """
-        Envía email al docente responsable de forma asíncrona
-        """
-        if asignatura.docente_responsable:
-            send_asignatura_assignment_email.delay(
-                docente_email=asignatura.docente_responsable.email,
-                docente_nombre=asignatura.docente_responsable.first_name,
-                asignatura_nombre=asignatura.nombre,
-                asignatura_codigo=asignatura.codigo,
-                periodo_nombre=asignatura.periodo_academico.nombre,
-                descripcion=asignatura.descripcion or ''
-            )
+
+    # Métodos de email eliminados porque la asignación de profesores ahora es solo por ProfesorAsignatura
     
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def importar(self, request):
@@ -512,18 +544,73 @@ class CarreraViewSet(viewsets.ModelViewSet):
         """Filtrar carreras según el rol del usuario"""
         queryset = Carrera.objects.select_related('facultad')
         
-        # Verificar si el usuario es coordinador (revisar ambos campos: rol y roles)
-        es_coordinador = False
-        if hasattr(self.request.user, 'roles') and self.request.user.roles.exists():
-            es_coordinador = self.request.user.roles.filter(tipo='coordinador').exists()
-        elif self.request.user.rol == 'coordinador':
-            es_coordinador = True
+        user = self.request.user
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Super Admin ve todas las carreras
+        if 'super_admin' in user_roles:
+            return queryset
+        
+        # Admin ve carreras de su facultad
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(facultad=user.facultad)
+            # Si no tiene facultad asignada, ve todas
+            return queryset
         
         # Coordinador solo ve carreras de su facultad
-        if es_coordinador and hasattr(self.request.user, 'facultad') and self.request.user.facultad:
-            queryset = queryset.filter(facultad=self.request.user.facultad)
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(facultad=user.facultad)
+            # Si no tiene facultad, no ver nada
+            return Carrera.objects.none()
         
         return queryset
+    
+    def perform_create(self, serializer):
+        """Validar que coordinador solo cree carreras para su facultad"""
+        user = self.request.user
+        facultad_id = serializer.validated_data.get('facultad').id
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Coordinador solo puede crear carreras para su facultad
+        if 'coordinador' in user_roles:
+            if not user.facultad or user.facultad.id != facultad_id:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("El coordinador solo puede crear carreras de su facultad")
+        
+        # Admin solo puede crear carreras para su facultad (si está asignado)
+        if 'admin' in user_roles:
+            if user.facultad and user.facultad.id != facultad_id:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("El administrador solo puede crear carreras de su facultad")
+        
+        serializer.save()
+    
+    def perform_update(self, serializer):
+        """Validar que no cambien la facultad de la carrera"""
+        user = self.request.user
+        instance = self.get_object()
+        facultad_id = serializer.validated_data.get('facultad', instance.facultad).id
+        
+        # Validar que coordinador/admin no cambien la facultad a otra
+        if facultad_id != instance.facultad.id:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("No se puede cambiar la facultad de una carrera existente")
+        
+        serializer.save()
 
 
 class PlanCarreraAsignaturaViewSet(viewsets.ModelViewSet):
@@ -543,15 +630,29 @@ class PlanCarreraAsignaturaViewSet(viewsets.ModelViewSet):
         """Filtrar planes según el rol del usuario"""
         queryset = PlanCarreraAsignatura.objects.select_related('carrera', 'asignatura')
         
-        # Verificar si el usuario es coordinador (revisar ambos campos: rol y roles)
-        es_coordinador = False
-        if hasattr(self.request.user, 'roles') and self.request.user.roles.exists():
-            es_coordinador = self.request.user.roles.filter(tipo='coordinador').exists()
-        elif self.request.user.rol == 'coordinador':
-            es_coordinador = True
+        user = self.request.user
+        
+        # Obtener roles del usuario
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        
+        # Super Admin ve todos los planes
+        if 'super_admin' in user_roles:
+            return queryset
+        
+        # Admin ve planes de carreras de su facultad
+        if 'admin' in user_roles:
+            if user.facultad:
+                return queryset.filter(carrera__facultad=user.facultad)
+            return queryset
         
         # Coordinador solo ve planes de carreras de su facultad
-        if es_coordinador and hasattr(self.request.user, 'facultad') and self.request.user.facultad:
-            queryset = queryset.filter(carrera__facultad=self.request.user.facultad)
+        if 'coordinador' in user_roles:
+            if user.facultad:
+                return queryset.filter(carrera__facultad=user.facultad)
+            return PlanCarreraAsignatura.objects.none()
         
         return queryset

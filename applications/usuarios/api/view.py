@@ -69,10 +69,21 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             if user.is_superuser or user.rol == 'super_admin':
                 queryset = Usuario.objects.all()
             elif user.rol == 'admin':
-                queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
+                # Admin solo ve usuarios de su facultad
+                if user.facultad:
+                    queryset = Usuario.objects.filter(
+                        Q(facultad=user.facultad) | Q(facultad__isnull=True)
+                    )
+                else:
+                    queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
             elif user.rol == 'coordinador':
-                # Coordinador ve estudiantes de su carrera y profesores de su facultad
-                queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
+                # Coordinador ve usuarios de su facultad
+                if user.facultad:
+                    queryset = Usuario.objects.filter(
+                        Q(facultad=user.facultad) | Q(facultad__isnull=True)
+                    )
+                else:
+                    queryset = Usuario.objects.filter(rol__in=['estudiante', 'profesor'])
             else:
                 queryset = Usuario.objects.filter(id=user.id)
             
@@ -109,83 +120,32 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     
     def update(self, request, *args, **kwargs):
         """
-        Actualizar usuario con validaciones de permiso granular
+        Permitir que el usuario estudiante edite solo nombre, apellido y correo electrónico de su propio perfil.
         """
         usuario = self.get_object()
         user_actual = request.user
-        
-        # Validación: un usuario puede editar su propio perfil aunque no tenga 'editar_usuario'
-        if usuario.id != user_actual.id and not user_actual.tiene_permiso('editar_usuario'):
+
+        # Solo permitir modificar su propio perfil
+        if usuario.id != user_actual.id:
             return Response(
                 {'detail': 'No tienes permiso para editar este usuario.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Extraer asignaturas_ids si viene en request.data (solo para profesores)
-        asignaturas_ids = request.data.pop('asignaturas_ids', None)
-        roles_list = request.data.pop('roles', None)
-        
-        serializer = UsuarioSerializer(usuario, data=request.data, partial=True)
-        
+
+        # Eliminar campos no permitidos
+        for campo in ['username', 'numero_documento', 'rol', 'roles', 'estado', 'is_active', 'is_staff', 'is_superuser', 'facultad', 'carrera', 'asignaturas_ids']:
+            request.data.pop(campo, None)
+
+        # Solo permitir modificar first_name, last_name y email
+        allowed = ['first_name', 'last_name', 'email']
+        data_filtrada = {k: v for k, v in request.data.items() if k in allowed}
+
+        serializer = UsuarioSerializer(usuario, data=data_filtrada, partial=True)
+
         if serializer.is_valid():
             usuario_actualizado = serializer.save()
-            
-            # Sincronizar estado con is_active
-            if 'estado' in request.data:
-                if request.data['estado'] == 'activo':
-                    usuario_actualizado.is_active = True
-                elif request.data['estado'] == 'inactivo':
-                    usuario_actualizado.is_active = False
-                usuario_actualizado.save()
-            
-            # Sincronizar rol legacy con tabla ManyToMany roles
-            if 'rol' in request.data and request.data['rol']:
-                from applications.usuarios.models import Rol
-                try:
-                    rol_obj = Rol.objects.get(tipo=request.data['rol'])
-                    # Limpiar roles anteriores y asignar el nuevo
-                    usuario_actualizado.roles.clear()
-                    usuario_actualizado.roles.add(rol_obj)
-                except Rol.DoesNotExist:
-                    pass
-            
-            # Si viene lista de roles, usarla (múltiples roles)
-            if roles_list:
-                from applications.usuarios.models import Rol
-                rol_objects = Rol.objects.filter(tipo__in=roles_list)
-                usuario_actualizado.roles.set(rol_objects)
-            
-            # Si cambió a activo, enviar correo de bienvenida
-            if 'estado' in request.data and request.data['estado'] == 'activo' and usuario_actualizado.roles.count() > 0:
-                from applications.usuarios.tasks import send_approval_welcome_email
-                try:
-                    roles_list = [r.tipo for r in usuario_actualizado.roles.all()]
-                    send_approval_welcome_email.delay(
-                        user_email=usuario_actualizado.email,
-                        first_name=usuario_actualizado.first_name or usuario_actualizado.username,
-                        roles=roles_list
-                    )
-                except Exception:
-                    pass
-            
-            # Si es profesor y se enviaron asignaturas, actualizar relación N-to-N
-            if usuario_actualizado.rol == 'profesor' and asignaturas_ids is not None:
-                # Eliminar asignaciones previas
-                ProfesorAsignatura.objects.filter(profesor=usuario_actualizado).delete()
-                
-                # Crear nuevas asignaciones
-                for asignatura_id in asignaturas_ids:
-                    try:
-                        asignatura = Asignatura.objects.get(id=asignatura_id)
-                        ProfesorAsignatura.objects.create(
-                            profesor=usuario_actualizado,
-                            asignatura=asignatura
-                        )
-                    except Asignatura.DoesNotExist:
-                        pass
-            
             return Response(UsuarioSerializer(usuario_actualizado).data)
-        
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def destroy(self, request, *args, **kwargs):

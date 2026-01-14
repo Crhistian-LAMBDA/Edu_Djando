@@ -141,6 +141,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
     carrera_nombre = serializers.CharField(source='carrera.nombre', read_only=True)
     asignaturas_ids = serializers.SerializerMethodField()
     roles = serializers.SerializerMethodField()
+    asignaturas_matriculadas = serializers.SerializerMethodField()
     
     class Meta:
         model = Usuario
@@ -149,21 +150,62 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'numero_documento',
             'rol', 'rol_display', 'roles', 'estado', 'is_active', 'is_staff', 'is_superuser',
             'facultad', 'facultad_nombre', 'carrera', 'carrera_nombre', 'asignaturas_ids',
+            'asignaturas_matriculadas',
             'fecha_creacion', 'date_joined', 'last_login'
         )
         read_only_fields = (
             'id', 'fecha_creacion', 'date_joined', 'last_login'
         )
+
+    def validate_numero_documento(self, value):
+        # Permitir que el propio usuario conserve su número, pero solo roles elevados pueden cambiarlo
+        request = self.context.get('request')
+        instance = self.instance
+        if instance:
+            # Si el valor no cambia, permitir
+            if instance.numero_documento == value:
+                return value
+        # Validar unicidad
+        if Usuario.objects.filter(numero_documento=value).exclude(pk=getattr(instance, 'pk', None)).exists():
+            raise serializers.ValidationError("Este número de documento ya está registrado.")
+        return value
     
     def get_roles(self, obj):
         """Obtener lista de roles asignados al usuario"""
         return [r.tipo for r in obj.roles.all()]
-    
+
     def get_asignaturas_ids(self, obj):
         """Obtener IDs de asignaturas asignadas al profesor"""
         if obj.rol == 'profesor':
             return list(obj.asignaturas_asignadas.values_list('asignatura_id', flat=True))
         return []
+
+    def get_asignaturas_matriculadas(self, obj):
+        """Obtener asignaturas matriculadas activas del estudiante (solo periodo activo). Nunca falla si falta info."""
+        try:
+            if getattr(obj, 'rol', None) != 'estudiante':
+                return []
+            from applications.matriculas.models import Matricula
+            from applications.academico.models import PeriodoAcademico
+            periodo_activo = PeriodoAcademico.objects.filter(estado='activo').order_by('-fecha_inicio').first()
+            if not periodo_activo:
+                return []
+            matriculas = Matricula.objects.filter(estudiante=obj, periodo=periodo_activo, estado='activa').select_related('asignatura')
+            result = []
+            for m in matriculas:
+                asignatura = getattr(m, 'asignatura', None)
+                periodo = getattr(m, 'periodo', None)
+                result.append({
+                    'id': m.id,
+                    'asignatura_id': getattr(asignatura, 'id', None),
+                    'asignatura_nombre': getattr(asignatura, 'nombre', ''),
+                    'asignatura_codigo': getattr(asignatura, 'codigo', ''),
+                    'periodo_id': getattr(periodo, 'id', None),
+                    'periodo_nombre': getattr(periodo, 'nombre', ''),
+                })
+            return result
+        except Exception:
+            return []
 
 
 class PermisoSerializer(serializers.ModelSerializer):

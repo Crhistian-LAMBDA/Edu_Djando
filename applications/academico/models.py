@@ -56,20 +56,8 @@ class Asignatura(models.Model):
     descripcion = models.TextField(blank=True, null=True)
     creditos = models.IntegerField(default=0)
     estado = models.BooleanField(default=True)  # Activa/Inactiva
-    docente_responsable = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        limit_choices_to={'rol': 'profesor'},
-        related_name='asignaturas_responsable'
-    )
-    profesores_adicionales = models.ManyToManyField(
-        settings.AUTH_USER_MODEL,
-        blank=True,
-        related_name='asignaturas_adicionales',
-        help_text='Profesores adicionales que enseñan esta asignatura'
-    )
+    # [AUDITORÍA 2026-01-06] Relación profesor-asignatura ahora solo por ProfesorAsignatura (tabla intermedia).
+    # Se eliminaron los campos docente_responsable y profesores_adicionales para mantener consistencia y trazabilidad profesional.
     periodo_academico = models.ForeignKey(
         PeriodoAcademico,
         on_delete=models.PROTECT,
