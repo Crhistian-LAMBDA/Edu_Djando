@@ -214,6 +214,63 @@ Sistema de Gestión Educativa - Colegio Django
 
 
 @shared_task
+def send_asignatura_unassignment_email(docente_email, docente_nombre, asignatura_nombre, asignatura_codigo, periodo_nombre):
+    """Tarea asíncrona para notificar al docente cuando es destituido/desasignado de una asignatura."""
+    subject = f'Desasignación de Asignatura - {asignatura_codigo}'
+
+    message = f"""
+Hola {docente_nombre},
+
+Le informamos que ya no se encuentra asignado a la siguiente asignatura.
+
+Detalles de la Asignatura:
+Nombre: {asignatura_nombre}
+Código: {asignatura_codigo}
+Período: {periodo_nombre}
+
+Si considera que esto es un error, contacte al coordinador o administrador.
+
+Saludos,
+Sistema de Gestión Educativa - Colegio Django
+    """
+
+    html_message = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+                <div style="background-color: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                    <h2 style="color: #F44336; text-align: center;">Desasignación de Asignatura</h2>
+                    <p>Hola <strong>{docente_nombre}</strong>,</p>
+                    <p>Le informamos que ya no se encuentra asignado a la siguiente asignatura.</p>
+                    <div style="background-color: #f9f9f9; padding: 20px; border-left: 4px solid #F44336; margin: 20px 0;">
+                        <p style="margin: 10px 0;"><strong>Nombre:</strong> {asignatura_nombre}</p>
+                        <p style="margin: 10px 0;"><strong>Código:</strong> {asignatura_codigo}</p>
+                        <p style="margin: 10px 0;"><strong>Período Académico:</strong> {periodo_nombre}</p>
+                    </div>
+                    <p>Si considera que esto es un error, contacte al coordinador o administrador.</p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                    <p style="color: #777; font-size: 12px; text-align: center;">Este es un correo automático, por favor no responder.</p>
+                </div>
+            </div>
+        </body>
+    </html>
+    """
+
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[docente_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        return f'Email de desasignación enviado exitosamente a {docente_email}'
+    except Exception as e:
+        return f'Error al enviar email de desasignación: {str(e)}'
+
+
+@shared_task
 def send_approval_pending_email(user_email, first_name):
     """
     Enviar correo cuando un usuario se registra indicando que está pendiente de aprobación

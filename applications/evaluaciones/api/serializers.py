@@ -136,7 +136,8 @@ class EntregaTareaSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'fecha_entrega', 'estado_entrega', 
-            'calificacion', 'comentarios_docente', 'fecha_calificacion'
+            'calificacion', 'comentarios_docente', 'fecha_calificacion',
+            'estudiante'
         ]
     
     def validate(self, data):

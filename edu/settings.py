@@ -43,7 +43,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'drf_spectacular',
     'applications.usuarios',
-    'applications.academico',
+    'applications.academico.apps.AcademicoConfig',
     'applications.evaluaciones',
     'applications.matriculas',
 ]
@@ -125,10 +125,14 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
+ # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Archivos de medios (uploads de usuarios)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 
@@ -169,6 +173,11 @@ SIMPLE_JWT = {
 # Configuración CORS
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:3002',
 ]
 CORS_ALLOW_CREDENTIALS = True
 

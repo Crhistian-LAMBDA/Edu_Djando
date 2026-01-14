@@ -34,6 +34,161 @@ class MisTareasEstudianteView(APIView):
 
         serializer = TareaSerializer(tareas, many=True)
         return Response(serializer.data)
+
+
+class MisCalificacionesEstudianteView(APIView):
+    """
+    Resumen de calificaciones del estudiante por asignatura.
+    GET /api/mis-calificaciones/
+
+    Retorna (por asignatura matriculada con horario):
+    - asignatura + docentes + horario
+    - tareas (peso) + calificación del estudiante (si existe)
+    - total ponderado y métricas para visualización
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Solo estudiantes
+        user_roles = []
+        if hasattr(user, 'roles') and user.roles.exists():
+            user_roles = [r.tipo for r in user.roles.all()]
+        elif hasattr(user, 'rol'):
+            user_roles = [user.rol]
+        if 'estudiante' not in user_roles:
+            return Response({'detail': 'Solo estudiantes pueden acceder a este endpoint.'}, status=403)
+
+        from django.db.models import Prefetch
+        from applications.matriculas.models import Matricula
+        from applications.evaluaciones.models import Tarea, EntregaTarea
+        from applications.academico.models import ProfesorAsignatura
+
+        objetivo_aprobacion = 60.0
+
+        matriculas = (
+            Matricula.objects
+            .select_related('asignatura', 'periodo')
+            .filter(estudiante=user, horario__isnull=False)
+            .exclude(horario='')
+        )
+
+        asignaturas_ids = list(matriculas.values_list('asignatura_id', flat=True))
+        if not asignaturas_ids:
+            return Response({
+                'objetivo_aprobacion': objetivo_aprobacion,
+                'asignaturas': [],
+            })
+
+        tareas = (
+            Tarea.objects
+            .select_related('asignatura')
+            .filter(asignatura_id__in=asignaturas_ids)
+        )
+        tareas_por_asignatura = {}
+        for t in tareas:
+            tareas_por_asignatura.setdefault(t.asignatura_id, []).append(t)
+
+        entregas = EntregaTarea.objects.filter(
+            estudiante=user,
+            tarea__asignatura_id__in=asignaturas_ids,
+        )
+        entregas_por_tarea = {e.tarea_id: e for e in entregas}
+
+        profesores = (
+            ProfesorAsignatura.objects
+            .select_related('profesor', 'asignatura')
+            .filter(asignatura_id__in=asignaturas_ids)
+        )
+        profesores_por_asignatura = {}
+        for pa in profesores:
+            profesores_por_asignatura.setdefault(pa.asignatura_id, []).append(pa.profesor)
+
+        asignaturas_payload = []
+        for m in matriculas:
+            asig_id = m.asignatura_id
+
+            docentes = profesores_por_asignatura.get(asig_id, [])
+            docentes_info = [
+                {
+                    'id': d.id,
+                    'nombre': (d.get_full_name() or d.username).strip(),
+                    'email': getattr(d, 'email', None),
+                }
+                for d in docentes
+            ]
+
+            tareas_list = tareas_por_asignatura.get(asig_id, [])
+            tareas_payload = []
+
+            nota_acumulada = 0.0
+            peso_calificado = 0.0
+            peso_total = 0.0
+
+            for t in tareas_list:
+                peso = float(getattr(t, 'peso_porcentual', 0) or 0)
+                peso_total += peso
+
+                entrega = entregas_por_tarea.get(t.id)
+                calificacion = None
+                if entrega and entrega.calificacion is not None:
+                    calificacion = float(entrega.calificacion)
+                    peso_calificado += peso
+                    nota_acumulada += calificacion * (peso / 100.0)
+
+                tareas_payload.append({
+                    'id': t.id,
+                    'titulo': t.titulo,
+                    'descripcion': t.descripcion,
+                    'tipo_tarea': t.tipo_tarea,
+                    'estado': t.estado,
+                    'peso_porcentual': peso,
+                    'fecha_publicacion': t.fecha_publicacion,
+                    'fecha_vencimiento': t.fecha_vencimiento,
+                    'archivo_adjunto': t.archivo_adjunto.url if getattr(t, 'archivo_adjunto', None) else None,
+                    'entrega': {
+                        'id': entrega.id,
+                        'estado_entrega': entrega.estado_entrega,
+                        'calificacion': calificacion,
+                        'fecha_calificacion': entrega.fecha_calificacion,
+                    } if entrega else None,
+                })
+
+            peso_restante = max(0.0, 100.0 - peso_calificado)
+            requerido_en_restante = None
+            if peso_restante > 0:
+                requerido_en_restante = (objetivo_aprobacion - nota_acumulada) / (peso_restante / 100.0)
+                if requerido_en_restante < 0:
+                    requerido_en_restante = 0.0
+
+            asignaturas_payload.append({
+                'matricula_id': m.id,
+                'periodo': {
+                    'id': m.periodo_id,
+                    'nombre': str(m.periodo),
+                },
+                'asignatura': {
+                    'id': m.asignatura_id,
+                    'codigo': m.asignatura.codigo,
+                    'nombre': m.asignatura.nombre,
+                },
+                'horario': m.horario,
+                'docentes': docentes_info,
+                'tareas': tareas_payload,
+                'resumen': {
+                    'nota_actual_ponderada': round(nota_acumulada, 2),
+                    'peso_calificado': round(peso_calificado, 2),
+                    'peso_restante': round(peso_restante, 2),
+                    'requerido_promedio_en_restante_para_ganar': round(requerido_en_restante, 2) if requerido_en_restante is not None else None,
+                    'peso_total_tareas_asignatura': round(peso_total, 2),
+                },
+            })
+
+        return Response({
+            'objetivo_aprobacion': objetivo_aprobacion,
+            'asignaturas': asignaturas_payload,
+        })
 """
 ViewSets para evaluaciones
 """
@@ -323,10 +478,7 @@ class EntregaTareaViewSet(viewsets.ModelViewSet):
         user = request.user
         
         # Validar que sea docente de la asignatura
-        es_docente = (
-            entrega.tarea.asignatura.docente_responsable == user or
-            entrega.tarea.asignatura.profesores_adicionales.filter(id=user.id).exists()
-        )
+        es_docente = entrega.tarea.asignatura.profesores_asignados.filter(profesor=user).exists()
         
         if not es_docente and user.rol not in ['coordinador', 'admin', 'super_admin']:
             return Response(
