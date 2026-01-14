@@ -39,6 +39,8 @@ urlpatterns = [
     path('api/', include(mis_tareas_urlpatterns)),
     # API REST - Matrículas
     path('api/', include(matriculas_router.urls)),
+    # API REST - Reportes
+    path('api/reportes/', include('applications.reportes.api.urls')),
     # API REST - Gestión de Entregas
     path('api/gestion-entregas/', include('applications.gestion_entregas.urls')),
     

@@ -484,7 +484,6 @@ class AsignaturaViewSet(viewsets.ModelViewSet):
                                     descripcion=descripcion,
                                     creditos=creditos,
                                     estado=True,
-                                    docente_responsable=None,
                                     periodo_academico=periodo
                                 )
                                 

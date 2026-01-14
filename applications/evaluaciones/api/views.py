@@ -67,12 +67,21 @@ class MisCalificacionesEstudianteView(APIView):
 
         objetivo_aprobacion = 60.0
 
+        # Filtros opcionales (HU-10): por periodo y/o asignatura
+        periodo_id = request.query_params.get('periodo_id')
+        asignatura_id = request.query_params.get('asignatura_id')
+
         matriculas = (
             Matricula.objects
             .select_related('asignatura', 'periodo')
             .filter(estudiante=user, horario__isnull=False)
             .exclude(horario='')
         )
+
+        if periodo_id:
+            matriculas = matriculas.filter(periodo_id=periodo_id)
+        if asignatura_id:
+            matriculas = matriculas.filter(asignatura_id=asignatura_id)
 
         asignaturas_ids = list(matriculas.values_list('asignatura_id', flat=True))
         if not asignaturas_ids:
@@ -132,8 +141,12 @@ class MisCalificacionesEstudianteView(APIView):
 
                 entrega = entregas_por_tarea.get(t.id)
                 calificacion = None
+                retroalimentacion_docente = None
+                estado_calificacion = None
                 if entrega and entrega.calificacion is not None:
                     calificacion = float(entrega.calificacion)
+                    retroalimentacion_docente = getattr(entrega, 'comentarios_docente', None)
+                    estado_calificacion = getattr(entrega, 'estado_entrega', None)
                     peso_calificado += peso
                     nota_acumulada += calificacion * (peso / 100.0)
 
@@ -144,6 +157,13 @@ class MisCalificacionesEstudianteView(APIView):
                     'tipo_tarea': t.tipo_tarea,
                     'estado': t.estado,
                     'peso_porcentual': peso,
+                    # Campos HU-10 (compat):
+                    # - nota: calificación (0-100)
+                    # - retroalimentacion_docente: comentarios del docente
+                    # - estado_calificacion: estado de la entrega (pendiente/revisada/calificada/...)
+                    'nota': calificacion,
+                    'retroalimentacion_docente': retroalimentacion_docente,
+                    'estado_calificacion': estado_calificacion,
                     'fecha_publicacion': t.fecha_publicacion,
                     'fecha_vencimiento': t.fecha_vencimiento,
                     'archivo_adjunto': t.archivo_adjunto.url if getattr(t, 'archivo_adjunto', None) else None,
@@ -151,6 +171,10 @@ class MisCalificacionesEstudianteView(APIView):
                         'id': entrega.id,
                         'estado_entrega': entrega.estado_entrega,
                         'calificacion': calificacion,
+                        'nota': calificacion,
+                        'comentarios_docente': getattr(entrega, 'comentarios_docente', None),
+                        'retroalimentacion_docente': getattr(entrega, 'comentarios_docente', None),
+                        'estado_calificacion': entrega.estado_entrega,
                         'fecha_calificacion': entrega.fecha_calificacion,
                     } if entrega else None,
                 })
@@ -178,6 +202,8 @@ class MisCalificacionesEstudianteView(APIView):
                 'tareas': tareas_payload,
                 'resumen': {
                     'nota_actual_ponderada': round(nota_acumulada, 2),
+                    # Alias HU-10: promedio ponderado final (en esta implementación coincide con el actual)
+                    'promedio_ponderado_final': round(nota_acumulada, 2),
                     'peso_calificado': round(peso_calificado, 2),
                     'peso_restante': round(peso_restante, 2),
                     'requerido_promedio_en_restante_para_ganar': round(requerido_en_restante, 2) if requerido_en_restante is not None else None,
