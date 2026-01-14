@@ -29,8 +29,10 @@ class TienePermiso(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
+        view_action = getattr(view, 'action', None)
+
         # Permitir que el usuario edite su propio perfil (nombre, apellido, email) sin permiso especial
-        if view.action in ['update', 'partial_update']:
+        if view_action in ['update', 'partial_update']:
             # Solo si está editando su propio perfil
             try:
                 usuario_id = view.kwargs.get('pk')
@@ -43,8 +45,8 @@ class TienePermiso(BasePermission):
         permiso_requerido = 'NO_ENCONTRADO'  # Sentinela
 
         # Prioridad 1: Permisos por acción
-        if hasattr(view, 'permisos_por_accion'):
-            permiso_requerido = view.permisos_por_accion.get(view.action, 'NO_ENCONTRADO')
+        if hasattr(view, 'permisos_por_accion') and view_action:
+            permiso_requerido = view.permisos_por_accion.get(view_action, 'NO_ENCONTRADO')
 
         # Prioridad 2: Permiso genérico
         if permiso_requerido == 'NO_ENCONTRADO' and hasattr(view, 'permiso_requerido'):

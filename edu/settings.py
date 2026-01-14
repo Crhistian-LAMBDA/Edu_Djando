@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     'applications.academico.apps.AcademicoConfig',
     'applications.evaluaciones',
     'applications.matriculas',
+    'applications.notificaciones.apps.NotificacionesConfig',
+    'applications.reportes.apps.ReportesConfig',
 ]
 
 MIDDLEWARE = [
@@ -207,6 +209,21 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'America/Bogota'
+
+# Celery Beat (recordatorios automáticos)
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'dispatch_recordatorios_vencimiento_cada_10_min': {
+        'task': 'applications.notificaciones.tasks.dispatch_recordatorios_vencimiento',
+        'schedule': crontab(minute='*/10'),
+        'args': (200,),
+    },
+    'reporte_mensual_primer_dia': {
+        'task': 'applications.reportes.tasks.generar_y_enviar_reporte_mensual',
+        'schedule': crontab(minute=0, hour=8, day_of_month='1'),
+    },
+}
 
 # Configuración Email
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'

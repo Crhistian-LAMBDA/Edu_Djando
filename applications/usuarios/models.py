@@ -2,6 +2,24 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 
+# Jerarquía de roles (HU-05). Mayor número = mayor jerarquía.
+# Nota: el proyecto usa "profesor" (no "docente"). Se mantiene alias por compatibilidad.
+ROLE_HIERARCHY = {
+    'super_admin': 5,
+    'admin': 4,
+    'coordinador': 3,
+    'profesor': 2,
+    'docente': 2,
+    'estudiante': 1,
+}
+
+
+def get_role_level(role_tipo: str | None) -> int:
+    if not role_tipo:
+        return 0
+    return int(ROLE_HIERARCHY.get(str(role_tipo), 0))
+
+
 class Permiso(models.Model):
     """Modelo de permisos granulares para control de acceso a funcionalidades específicas"""
     MODULOS = (
@@ -158,14 +176,65 @@ class Usuario(AbstractUser):
     def tiene_permiso(self, codigo_permiso):
         """Verifica si el usuario tiene un permiso específico a través de sus roles"""
         # Super admin siempre tiene todos los permisos
-        if self.roles.filter(tipo='super_admin').exists():
+        if self.is_superuser or self.roles.filter(tipo='super_admin').exists() or getattr(self, 'rol', None) == 'super_admin':
             return True
         
         # Verificar si alguno de los roles del usuario tiene el permiso
         for rol in self.roles.all():
             if rol.tiene_permiso(codigo_permiso):
                 return True
+
+        # Fallback legacy: si no tiene roles M2M pero sí `rol`, intentar resolverlo contra tabla Rol
+        legacy_rol = getattr(self, 'rol', None)
+        if legacy_rol:
+            try:
+                rol_obj = Rol.objects.get(tipo=legacy_rol)
+                return rol_obj.tiene_permiso(codigo_permiso)
+            except Rol.DoesNotExist:
+                return False
         return False
+
+    def get_roles_tipos(self):
+        """Lista de tipos de rol del usuario (M2M)."""
+        try:
+            return list(self.roles.values_list('tipo', flat=True))
+        except Exception:
+            return []
+
+    def get_rol_principal(self):
+        """Retorna el rol principal (más alto) considerando M2M y rol legacy."""
+        roles = self.get_roles_tipos()
+        legacy = getattr(self, 'rol', None)
+        if legacy:
+            roles.append(legacy)
+        if not roles:
+            return None
+        roles = [r for r in roles if r]
+        if not roles:
+            return None
+        return max(roles, key=get_role_level)
+
+    def get_nivel_jerarquia(self) -> int:
+        """Nivel jerárquico del usuario según HU-05."""
+        if self.is_superuser:
+            return ROLE_HIERARCHY.get('super_admin', 5)
+        return get_role_level(self.get_rol_principal())
+
+    def puede_asignar_rol(self, target_role_tipo: str | None) -> bool:
+        """Regla HU-05: no puede asignar un rol igual o superior al suyo (estrictamente menor)."""
+        if self.is_superuser:
+            return True
+        my_level = self.get_nivel_jerarquia()
+        target_level = get_role_level(target_role_tipo)
+        return my_level > target_level
+
+    def puede_editar_usuario(self, target_user: 'Usuario') -> bool:
+        """Regla HU-05: solo puede editar usuarios de menor jerarquía."""
+        if self.is_superuser:
+            return True
+        if not target_user:
+            return False
+        return self.get_nivel_jerarquia() > target_user.get_nivel_jerarquia()
     
     def enviar_correo_cambio_password(self):
         """Envía correo de confirmación cuando se cambia la contraseña"""

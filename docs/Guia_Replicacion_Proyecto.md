@@ -139,24 +139,33 @@ python manage.py shell
 
 CRUD completo de asignaturas con toggle de estado activo/inactivo + notificación email al docente cuando se desactiva.
 
+> Nota (implementación actual del proyecto):
+>
+> - La asignación de docentes a asignaturas NO se guarda en un campo `docente_responsable` dentro de `Asignatura`.
+> - Se implementa mediante la tabla intermedia `ProfesorAsignatura` (permite trazabilidad y múltiples asignaciones si se requiere).
+> - La notificación por asignación se envía automáticamente vía señales cuando se crea `ProfesorAsignatura`.
+
 ### Implementación Backend
 
 **1. Modelo Asignatura (`applications/academico/models.py`)**:
 
 ```python
 class Asignatura(models.Model):
-  codigo = models.CharField(max_length=10, unique=True)
-  nombre = models.CharField(max_length=200)
-  creditos = models.PositiveIntegerField(default=3)
-  estado = models.BooleanField(default=True)  # True=Activa, False=Inactiva
-  facultad = models.ForeignKey('Facultad', on_delete=models.CASCADE)
-  docente_responsable = models.ForeignKey(
-    'usuarios.Usuario',
-    on_delete=models.SET_NULL,
-    null=True,
-    blank=True,
-    limit_choices_to={'rol': 'docente'}
+  nombre = models.CharField(max_length=100)
+  codigo = models.CharField(max_length=20, unique=True)
+  descripcion = models.TextField(blank=True, null=True)
+  estado = models.BooleanField(default=True)
+  fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+  # Período académico obligatorio
+  periodo_academico = models.ForeignKey(
+    'academico.PeriodoAcademico',
+    on_delete=models.PROTECT,
+    related_name='asignaturas'
   )
+
+  # Docentes asignados: se gestiona por tabla intermedia
+  # (ver modelo ProfesorAsignatura)
 
   class Meta:
     ordering = ['codigo']
@@ -169,48 +178,50 @@ class Asignatura(models.Model):
 
 ```python
 class AsignaturaSerializer(serializers.ModelSerializer):
-  facultad_nombre = serializers.CharField(source='facultad.nombre', read_only=True)
-  docente_nombre = serializers.SerializerMethodField()
+  # Campo write-only para asignar docentes (IDs de usuario profesor)
+  profesores = serializers.ListField(
+    child=serializers.IntegerField(),
+    write_only=True,
+    required=False
+  )
+
+  # Campo read-only para ver docentes asignados
+  profesores_info = serializers.SerializerMethodField(read_only=True)
 
   class Meta:
     model = Asignatura
-    fields = ['id', 'codigo', 'nombre', 'creditos', 'estado',
-          'facultad', 'facultad_nombre', 'docente_responsable', 'docente_nombre']
+    fields = [
+      'id', 'nombre', 'codigo', 'descripcion', 'estado', 'fecha_creacion',
+      'periodo_academico',
+      'profesores', 'profesores_info'
+    ]
 
-  def get_docente_nombre(self, obj):
-    if obj.docente_responsable:
-      return f"{obj.docente_responsable.first_name} {obj.docente_responsable.last_name}"
-    return None
+  def create(self, validated_data):
+    profesores_ids = validated_data.pop('profesores', [])
+    asignatura = super().create(validated_data)
+    for profesor_id in profesores_ids:
+      ProfesorAsignatura.objects.create(asignatura=asignatura, profesor_id=profesor_id)
+    return asignatura
 ```
 
-**3. ViewSet con notificación (`applications/academico/api/views.py`)**:
+**3. Notificación al asignar docente (Señales)**
+
+La notificación requerida por HU‑06 ("Debe notificar al docente cuando se le asigne una asignatura") se implementa con señales:
+
+- Al crear `ProfesorAsignatura`, se encola `send_asignatura_assignment_email`.
+- Al eliminar la asignación, se encola `send_asignatura_unassignment_email`.
+
+Ver: `applications/academico/signals.py`.
+
+**4. Celery Tasks de notificación (`applications/usuarios/tasks.py`)**:
 
 ```python
-from applications.usuarios.tasks import send_asignatura_desactivacion_email
+from applications.usuarios.tasks import send_asignatura_assignment_email
 
-class AsignaturaViewSet(viewsets.ModelViewSet):
-  queryset = Asignatura.objects.all()
-  serializer_class = AsignaturaSerializer
-  permission_classes = [IsAuthenticated]
-
-  def update(self, request, *args, **kwargs):
-    instance = self.get_object()
-    estado_anterior = instance.estado
-
-    response = super().update(request, *args, **kwargs)
-
-    # Detectar cambio de activo a inactivo
-    instance.refresh_from_db()
-    if estado_anterior is True and instance.estado is False:
-      if instance.docente_responsable:
-        send_asignatura_desactivacion_email.delay(
-          docente_email=instance.docente_responsable.email,
-          docente_nombre=f"{instance.docente_responsable.first_name} {instance.docente_responsable.last_name}",
-          asignatura_codigo=instance.codigo,
-          asignatura_nombre=instance.nombre
-        )
-
-    return response
+@shared_task
+def send_asignatura_assignment_email(docente_email, docente_nombre, asignatura_nombre, asignatura_codigo, periodo_nombre, descripcion):
+  """Envía notificación al docente cuando se le asigna una asignatura."""
+  ...
 ```
 
 **4. Celery Task para Email (`applications/usuarios/tasks.py`)**:

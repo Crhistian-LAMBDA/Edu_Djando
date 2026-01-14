@@ -236,6 +236,13 @@ SIMPLE_JWT = {
 - ✅ Renovación automática de tokens
 - ✅ Cierre de sesión con limpieza de tokens
 
+### HU-06: Creación/gestión de Asignaturas (módulo académico)
+
+- ✅ Campos: nombre, código (único), descripción, estado, fecha_creacion, periodo_academico
+- ✅ Activar/desactivar por `estado`
+- ✅ Asignación de docentes implementada vía tabla intermedia `ProfesorAsignatura` (no campo `docente_responsable`)
+- ✅ Notificación al asignar docente vía señales (ver `applications/academico/signals.py`)
+
 ## 🛠️ Tecnologías Utilizadas
 
 - **Django 5.2** - Framework web
